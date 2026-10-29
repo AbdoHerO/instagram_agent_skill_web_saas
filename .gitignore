@@ -1,0 +1,31 @@
+# Dependencies and builds
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Secrets and local configuration (never commit)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+
+# Local data: uploaded media, database dumps, scratch files
+storage/
+*.dump
+*.sql.gz
+.data/
+
+# The vendored upstream repository is kept as plain files (its own .git is removed)
+vendor/instagram-agent-skill/.git/
+
+# Claude Code: local settings stay local; the project-local skills and voice profile are versioned
+.claude/settings.local.json
+
+# Tests and logs
+coverage/
+test-results/
+*.log

@@ -1,0 +1,27 @@
+@import 'tailwindcss';
+
+/* Design tokens: a calm, product-first dashboard (slate surfaces, one blue for actions). */
+@theme {
+  --color-ink: #0f172a;
+  --color-muted: #64748b;
+  --color-line: #e2e8f0;
+  --color-paper: #ffffff;
+  --color-ground: #f8fafc;
+  --color-accent: #1d4ed8;
+  --color-accent-soft: #eff6ff;
+  --color-danger: #b91c1c;
+  --color-success: #15803d;
+  --color-warning: #b45309;
+  --font-sans: ui-sans-serif, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+html,
+body {
+  background: var(--color-ground);
+  color: var(--color-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
