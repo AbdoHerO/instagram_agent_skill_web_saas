@@ -8,19 +8,19 @@ import { z } from 'zod';
 import type { ActionState } from '@/components/forms';
 import { isValidTimeZone, zonedToUtc } from '@/lib/time';
 import { GenerationError, queueGeneration, retryGeneration } from '@/server/ai/generate';
-import { generateDeps, mediaStorage, metaConfig } from '@/server/app';
+import { generateDeps, metaConfig } from '@/server/app';
 import { requireUser } from '@/server/auth/session';
 import { getBrand } from '@/server/brand';
 import { searchProducts, toFact } from '@/server/catalog/client';
 import {
   approveDraft, archiveDraft, cancelSchedule, createDraft, editDraft, getDraftDetail, NotFoundError, rejectDraft, reschedule, scheduleDraft, submitForApproval,
 } from '@/server/content/service';
-import { contentPayloadSchema, type ContentPayload, type VersionValidation } from '@/server/content/types';
+import { contentPayloadSchema, type ContentPayload } from '@/server/content/types';
 import { WorkflowError } from '@/server/content/workflow';
 import { getDb } from '@/server/db';
 import { brandProfiles, instagramAccounts } from '@/server/db/schema';
 import { env } from '@/server/env';
-import { MediaError, saveUpload } from '@/server/media/service';
+import { MediaError } from '@/server/media/service';
 import { accountToken, checkAccount, disconnectAccount } from '@/server/meta/accounts';
 import { MetaApiError } from '@/server/meta/graph';
 import { mediaInsights, type InsightsResult } from '@/server/meta/insights';
@@ -143,22 +143,7 @@ export async function saveVersionAction(_: ActionState, fd: FormData): Promise<A
   });
 }
 
-export async function uploadMediaAction(_: ActionState, fd: FormData): Promise<ActionState> {
-  const user = await requireUser();
-  return attempt(async () => {
-    const draftId = z.uuid().parse(str(fd, 'draftId'));
-    const file = fd.get('file');
-    if (!(file instanceof File) || file.size === 0) return { error: 'Choose a JPEG image or an MP4 video.' };
-    const db = getDb();
-    const detail = await getDraftDetail(db, user.id, draftId);
-    const asset = await saveUpload(db, mediaStorage(), { ownerId: user.id, data: Buffer.from(await file.arrayBuffer()), originalName: file.name, maxBytes: env().MEDIA_MAX_BYTES });
-    // Same text, new media: the previous version's skill checks still apply.
-    const tools = (detail.current?.validation as VersionValidation | undefined)?.tools;
-    await editDraft(db, { ownerId: user.id, userId: user.id, draftId, payload: contentPayloadSchema.parse(detail.current?.payload ?? {}), mediaAssetId: asset.id, tools });
-    revalidatePath(`/drafts/${draftId}`);
-    return { ok: true, message: 'Media attached in a new version. Approve it before scheduling.' };
-  });
-}
+// Media uploads go to the route handler /api/drafts/[id]/media (see there why not a Server Action).
 
 const idSchema = z.object({ draftId: z.uuid() });
 

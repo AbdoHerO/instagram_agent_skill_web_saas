@@ -49,6 +49,12 @@ the static prompt cached, server-side refusal fallback. 6. Run the skills' tools
 `ai_generations` record (tokens, duration, status; never keys). Errors map to clear messages; refusals and invalid
 outputs are recorded.
 
+## Media uploads (`src/app/api/drafts/[id]/media`)
+
+A route handler, not a Server Action (Cloudflare inspects Server Action bodies and blocked photos): signed-in user,
+same origin, the user's own editable draft (checked before the file is stored), type sniffed from the bytes
+(JPEG, MP4), `MEDIA_MAX_BYTES`. The file becomes a new version of the draft, which must be approved again.
+
 ## Publishing (`src/server/jobs`)
 
 - **Queue**: `publishing_jobs` rows. The worker claims due jobs with one atomic `UPDATE … ORDER BY run_at LIMIT n` that stamps them with its id and the claim time (InnoDB locks and re-checks each row: no double claim), takes

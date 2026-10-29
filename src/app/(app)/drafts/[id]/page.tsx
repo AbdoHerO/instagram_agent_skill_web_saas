@@ -17,9 +17,10 @@ import { listAccounts } from '@/server/meta/accounts';
 import { eq } from 'drizzle-orm';
 
 import {
-  approveAction, archiveAction, cancelScheduleAction, rejectAction, rescheduleAction, saveVersionAction, scheduleAction, submitAction, uploadMediaAction,
+  approveAction, archiveAction, cancelScheduleAction, rejectAction, rescheduleAction, saveVersionAction, scheduleAction, submitAction,
 } from '../../actions';
 import { GeneratingDraft } from './generating';
+import { MediaUpload } from './media-upload';
 import { SkillChecks } from './skill-checks';
 
 export const metadata = { title: 'Draft' };
@@ -63,8 +64,6 @@ export default async function DraftPage({ params }: { params: Promise<{ id: stri
   const scheduleDefaults = inputValuesInZone(draft.scheduledAt ?? hoursFromNow(24), tz);
   const connected = accounts.filter((a) => a.status === 'connected');
   const publishable = PUBLISHABLE_KINDS.includes(draft.kind as DraftKind);
-  // Also capped by Next.js's Server Action body limit (60 MB, next.config.ts), less a margin for the form's other fields.
-  const maxUploadBytes = Math.min(env().MEDIA_MAX_BYTES, 60 * 1024 * 1024 - 64 * 1024);
   // Sections the format uses (others stay as hidden values so nothing is lost on save).
   const kind = draft.kind as DraftKind;
   const show = {
@@ -190,12 +189,7 @@ export default async function DraftPage({ params }: { params: Promise<{ id: stri
           {publishable ? (
             <Card title="Media">
               {canDo(status, 'edit') ? (
-                <ActionForm action={uploadMediaAction} className="space-y-2" maxFileBytes={maxUploadBytes}>
-                  <input type="hidden" name="draftId" value={draft.id} />
-                  <input type="file" name="file" accept={draft.kind === 'reel' ? 'video/mp4' : 'image/jpeg'} className="block w-full text-sm" />
-                  <p className="text-xs text-muted">{draft.kind === 'reel' ? 'MP4 video' : 'JPEG image'}, up to {Math.floor(maxUploadBytes / 1024 / 1024)} MB · attaching creates a new version (re-approval needed).</p>
-                  <SubmitButton variant="secondary" pendingLabel="Uploading…">Upload and attach</SubmitButton>
-                </ActionForm>
+                <MediaUpload draftId={draft.id} kind={draft.kind} maxBytes={env().MEDIA_MAX_BYTES} />
               ) : <p className="text-sm text-muted">{media ? media.originalName ?? 'Attached' : 'No media'}</p>}
             </Card>
           ) : null}

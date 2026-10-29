@@ -27,8 +27,9 @@ const nextConfig: NextConfig = {
   experimental: {
     serverActions: {
       allowedOrigins: isLocal ? [] : [publicUrl!.host, LOCAL_ORIGIN],
-      // Media uploads go through a Server Action (default limit 1 MB). 60 MB for a Reel; Nginx on CloudOps
-      // accepts 64 MB, and MEDIA_MAX_BYTES (60 MiB) gives the clear error before that.
+      // Server Action bodies (default 1 MB). Media files no longer go through Server Actions but to the route
+      // /api/drafts/[id]/media (MEDIA_MAX_BYTES, 60 MiB; Nginx on CloudOps accepts 64 MB): Cloudflare's rules for
+      // Server Actions blocked photo uploads. Kept at 60 MB so a large form never fails on this limit.
       bodySizeLimit: '60mb',
     },
   },
