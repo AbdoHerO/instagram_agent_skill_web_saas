@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 
-import type { Db } from '@/server/db';
+import { insertRow, type Db } from '@/server/db';
 import { mediaAssets } from '@/server/db/schema';
 
 import { fileHash, newMediaKey, sniffMime, type MediaStorage } from './storage';
@@ -15,11 +15,10 @@ export async function saveUpload(db: Db, storage: MediaStorage, input: { ownerId
   if (!mime) throw new MediaError('Only JPEG images (feed posts) and MP4 videos (Reels) are accepted: Instagram publishing needs these formats.');
   const key = newMediaKey(input.ownerId, mime);
   await storage.put(key, input.data, mime);
-  const [asset] = await db.insert(mediaAssets).values({
+  return insertRow(db, mediaAssets, {
     ownerId: input.ownerId, storage: storage.kind, storageKey: key, mimeType: mime, sizeBytes: input.data.length,
     sha256: fileHash(input.data), originalName: input.originalName.slice(0, 200),
-  }).returning();
-  return asset!;
+  });
 }
 
 export async function ownedAsset(db: Db, ownerId: string, id: string) {

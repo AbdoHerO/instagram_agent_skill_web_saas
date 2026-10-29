@@ -81,8 +81,10 @@ export async function connectAccounts(db: Db, config: MetaConfig, input: { owner
       tokenCiphertext: ciphertext, tokenType: tokenInfo.type ?? 'SYSTEM_USER', tokenExpiresAt: tokenInfo.expiresAt, grantedScopes: tokenInfo.scopes,
       status: 'connected', lastCheckedAt: new Date(), lastError: null, updatedAt: new Date(),
     };
-    const [row] = await db.insert(instagramAccounts).values(values)
-      .onConflictDoUpdate({ target: [instagramAccounts.ownerId, instagramAccounts.igUserId], set: values }).returning();
+    // Reconnecting the same account updates its row (unique on owner and Instagram id).
+    await db.insert(instagramAccounts).values(values).onDuplicateKeyUpdate({ set: values });
+    const [row] = await db.select().from(instagramAccounts)
+      .where(and(eq(instagramAccounts.ownerId, input.ownerId), eq(instagramAccounts.igUserId, account.id)));
     saved.push(row!);
     await logActivity(db, { ownerId: input.ownerId, type: 'account_connected', level: 'success', message: `Instagram account @${row!.username} connected` });
   }
@@ -140,8 +142,11 @@ export async function checkAccount(db: Db, config: MetaConfig, account: typeof i
  * Integrations > Connected apps to invalidate it on Meta's side.
  */
 export async function disconnectAccount(db: Db, ownerId: string, accountId: string) {
-  const [row] = await db.update(instagramAccounts).set({ tokenCiphertext: null, status: 'disconnected', grantedScopes: [], updatedAt: new Date() })
-    .where(and(eq(instagramAccounts.id, accountId), eq(instagramAccounts.ownerId, ownerId))).returning();
+  const owned = and(eq(instagramAccounts.id, accountId), eq(instagramAccounts.ownerId, ownerId));
+  const [found] = await db.select({ id: instagramAccounts.id }).from(instagramAccounts).where(owned);
+  if (!found) return null;
+  await db.update(instagramAccounts).set({ tokenCiphertext: null, status: 'disconnected', grantedScopes: [], updatedAt: new Date() }).where(owned);
+  const [row] = await db.select().from(instagramAccounts).where(owned);
   if (row) await logActivity(db, { ownerId, type: 'account_disconnected', level: 'warning', message: `Instagram account @${row.username} disconnected` });
   return row ?? null;
 }

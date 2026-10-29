@@ -2,7 +2,7 @@ import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
 
 import { logActivity } from '@/server/activity';
 import { sha256 } from '@/server/crypto';
-import type { Db } from '@/server/db';
+import { affectedRows, insertRow, updateRow, type Db } from '@/server/db';
 import { approvals, contentDrafts, contentVersions, instagramAccounts, mediaAssets, publishingJobs, publishLogs } from '@/server/db/schema';
 
 import { contentPayloadSchema, type ContentPayload, type VersionValidation } from './types';
@@ -44,7 +44,7 @@ async function insertVersion(db: Db, input: { draftId: string; version: number; 
     tools: input.tools,
     checkedAt: new Date().toISOString(),
   };
-  const [row] = await db.insert(contentVersions).values({
+  return insertRow(db, contentVersions, {
     draftId: input.draftId,
     version: input.version,
     caption: payload.caption,
@@ -54,8 +54,7 @@ async function insertVersion(db: Db, input: { draftId: string; version: number; 
     validation,
     contentHash: contentHashOf(payload, input.mediaAssetId),
     createdBy: input.userId,
-  }).returning();
-  return row!;
+  });
 }
 
 /** Every generated or hand-written post starts here, as a draft. Never published from here. */
@@ -65,14 +64,15 @@ export async function createDraft(db: Db, input: {
 }) {
   await assertOwnedMedia(db, input.ownerId, input.mediaAssetId ?? null);
   return db.transaction(async (tx) => {
-    const [draft] = await tx.insert(contentDrafts).values({
+    const t = tx as unknown as Db;
+    const draft = await insertRow(t, contentDrafts, {
       ownerId: input.ownerId, kind: input.kind, title: input.title.slice(0, 200), status: 'draft',
       instagramAccountId: input.instagramAccountId ?? null, timezone: input.timezone ?? 'Africa/Casablanca',
-    }).returning();
-    const version = await insertVersion(tx as unknown as Db, { draftId: draft!.id, version: 1, kind: input.kind, payload: input.payload, mediaAssetId: input.mediaAssetId ?? null, userId: input.userId, tools: input.tools });
-    await tx.update(contentDrafts).set({ currentVersionId: version.id }).where(eq(contentDrafts.id, draft!.id));
-    await logActivity(tx as unknown as Db, { ownerId: input.ownerId, draftId: draft!.id, type: 'draft_created', message: `Draft created: ${draft!.title}` });
-    return { draft: { ...draft!, currentVersionId: version.id }, version };
+    });
+    const version = await insertVersion(t, { draftId: draft.id, version: 1, kind: input.kind, payload: input.payload, mediaAssetId: input.mediaAssetId ?? null, userId: input.userId, tools: input.tools });
+    await tx.update(contentDrafts).set({ currentVersionId: version.id }).where(eq(contentDrafts.id, draft.id));
+    await logActivity(t, { ownerId: input.ownerId, draftId: draft.id, type: 'draft_created', message: `Draft created: ${draft.title}` });
+    return { draft: { ...draft, currentVersionId: version.id }, version };
   });
 }
 
@@ -97,15 +97,15 @@ export async function editDraft(db: Db, input: {
       const [approved] = await tx.select().from(contentVersions).where(eq(contentVersions.id, draft.approvedVersionId!));
       await tx.insert(approvals).values({ draftId: draft.id, versionId: draft.approvedVersionId!, userId: input.userId, decision: 'invalidated', note: `Edited after approval (version ${version.version})`, contentHash: approved?.contentHash ?? '' });
     }
-    const cancelled = await tx.update(publishingJobs).set({ status: 'cancelled', finishedAt: new Date(), lastError: 'Cancelled: the post was edited after approval', updatedAt: new Date() })
-      .where(and(eq(publishingJobs.draftId, draft.id), eq(publishingJobs.status, 'queued'))).returning({ id: publishingJobs.id });
-    const [updated] = await tx.update(contentDrafts).set({
+    const cancelled = affectedRows(await tx.update(publishingJobs).set({ status: 'cancelled', finishedAt: new Date(), lastError: 'Cancelled: the post was edited after approval', updatedAt: new Date() })
+      .where(and(eq(publishingJobs.draftId, draft.id), eq(publishingJobs.status, 'queued'))));
+    const updated = await updateRow(t, contentDrafts, draft.id, {
       currentVersionId: version.id, approvedVersionId: null, status, scheduledAt: null, title: input.title?.slice(0, 200) ?? draft.title, updatedAt: new Date(),
-    }).where(eq(contentDrafts.id, draft.id)).returning();
-    if (wasApproved || cancelled.length) {
-      await logActivity(t, { ownerId: input.ownerId, draftId: draft.id, type: 'approval_invalidated', level: 'warning', message: `"${draft.title}" was edited: approval removed${cancelled.length ? ' and scheduling cancelled' : ''}. Approve the new version.` });
+    });
+    if (wasApproved || cancelled) {
+      await logActivity(t, { ownerId: input.ownerId, draftId: draft.id, type: 'approval_invalidated', level: 'warning', message: `"${draft.title}" was edited: approval removed${cancelled ? ' and scheduling cancelled' : ''}. Approve the new version.` });
     }
-    return { draft: updated!, version };
+    return { draft: updated, version };
   });
 }
 
@@ -118,9 +118,9 @@ async function currentVersion(db: Db, versionId: string | null) {
 export async function submitForApproval(db: Db, ownerId: string, draftId: string) {
   const draft = await ownedDraft(db, ownerId, draftId);
   const status = nextStatus(draft.status as DraftStatus, 'submit');
-  const [row] = await db.update(contentDrafts).set({ status, updatedAt: new Date() }).where(eq(contentDrafts.id, draft.id)).returning();
+  const row = await updateRow(db, contentDrafts, draft.id, { status, updatedAt: new Date() });
   await logActivity(db, { ownerId, draftId, type: 'submitted', message: `"${draft.title}" is awaiting approval` });
-  return row!;
+  return row;
 }
 
 /** Explicit approval of the current version (blocked while it has unresolved issues). */
@@ -138,9 +138,9 @@ export async function approveDraft(db: Db, input: { ownerId: string; userId: str
   }
   return db.transaction(async (tx) => {
     await tx.insert(approvals).values({ draftId: draft.id, versionId: version.id, userId: input.userId, decision: 'approved', note: input.note ?? null, contentHash: version.contentHash });
-    const [row] = await tx.update(contentDrafts).set({ status, approvedVersionId: version.id, updatedAt: new Date() }).where(eq(contentDrafts.id, draft.id)).returning();
+    const row = await updateRow(tx as unknown as Db, contentDrafts, draft.id, { status, approvedVersionId: version.id, updatedAt: new Date() });
     await logActivity(tx as unknown as Db, { ownerId: input.ownerId, draftId: draft.id, type: 'approved', level: 'success', message: `"${draft.title}" approved (version ${version.version})` });
-    return row!;
+    return row;
   });
 }
 
@@ -150,9 +150,9 @@ export async function rejectDraft(db: Db, input: { ownerId: string; userId: stri
   const version = await currentVersion(db, draft.currentVersionId);
   return db.transaction(async (tx) => {
     await tx.insert(approvals).values({ draftId: draft.id, versionId: version!.id, userId: input.userId, decision: 'rejected', note: input.note ?? null, contentHash: version!.contentHash });
-    const [row] = await tx.update(contentDrafts).set({ status, approvedVersionId: null, updatedAt: new Date() }).where(eq(contentDrafts.id, draft.id)).returning();
+    const row = await updateRow(tx as unknown as Db, contentDrafts, draft.id, { status, approvedVersionId: null, updatedAt: new Date() });
     await logActivity(tx as unknown as Db, { ownerId: input.ownerId, draftId: draft.id, type: 'rejected', level: 'warning', message: `"${draft.title}" rejected${input.note ? `: ${input.note}` : ''}` });
-    return row!;
+    return row;
   });
 }
 
@@ -185,14 +185,14 @@ export async function scheduleDraft(db: Db, input: { ownerId: string; draftId: s
       throw new WorkflowError('This version has already been published or is publishing.', 'already_published');
     }
     // Cancelled and failed jobs of this version stay as history; the unique index covers live ones only.
-    const [job] = await tx.insert(publishingJobs).values({
+    const t = tx as unknown as Db;
+    const job = await insertRow(t, publishingJobs, {
       ownerId: input.ownerId, draftId: draft.id, versionId: version.id, instagramAccountId: account.id,
       runAt: input.runAt, status: 'queued', idempotencyKey: `publish:${version.id}`,
-    }).returning();
-    const [row] = await tx.update(contentDrafts).set({ status, scheduledAt: input.runAt, timezone: input.timezone, instagramAccountId: account.id, lastError: null, updatedAt: new Date() })
-      .where(eq(contentDrafts.id, draft.id)).returning();
-    await logActivity(tx as unknown as Db, { ownerId: input.ownerId, draftId: draft.id, type: 'scheduled', message: `"${draft.title}" scheduled for ${input.runAt.toISOString()} (${input.timezone}) on @${account.username}` });
-    return { draft: row!, job: job! };
+    });
+    const row = await updateRow(t, contentDrafts, draft.id, { status, scheduledAt: input.runAt, timezone: input.timezone, instagramAccountId: account.id, lastError: null, updatedAt: new Date() });
+    await logActivity(t, { ownerId: input.ownerId, draftId: draft.id, type: 'scheduled', message: `"${draft.title}" scheduled for ${input.runAt.toISOString()} (${input.timezone}) on @${account.username}` });
+    return { draft: row, job };
   });
 }
 
@@ -201,12 +201,12 @@ export async function cancelSchedule(db: Db, ownerId: string, draftId: string) {
   const draft = await ownedDraft(db, ownerId, draftId);
   const status = nextStatus(draft.status as DraftStatus, 'unschedule');
   return db.transaction(async (tx) => {
-    const cancelled = await tx.update(publishingJobs).set({ status: 'cancelled', finishedAt: new Date(), updatedAt: new Date() })
-      .where(and(eq(publishingJobs.draftId, draft.id), eq(publishingJobs.status, 'queued'))).returning({ id: publishingJobs.id });
-    if (!cancelled.length) throw new WorkflowError('The post is already being published and can no longer be cancelled.', 'job_running');
-    const [row] = await tx.update(contentDrafts).set({ status, scheduledAt: null, updatedAt: new Date() }).where(eq(contentDrafts.id, draft.id)).returning();
+    const cancelled = affectedRows(await tx.update(publishingJobs).set({ status: 'cancelled', finishedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(publishingJobs.draftId, draft.id), eq(publishingJobs.status, 'queued'))));
+    if (!cancelled) throw new WorkflowError('The post is already being published and can no longer be cancelled.', 'job_running');
+    const row = await updateRow(tx as unknown as Db, contentDrafts, draft.id, { status, scheduledAt: null, updatedAt: new Date() });
     await logActivity(tx as unknown as Db, { ownerId, draftId, type: 'unscheduled', message: `Scheduling cancelled for "${draft.title}"` });
-    return row!;
+    return row;
   });
 }
 
@@ -215,20 +215,20 @@ export async function reschedule(db: Db, input: { ownerId: string; draftId: stri
   if (draft.status !== 'scheduled') throw new WorkflowError('Only a scheduled post can be rescheduled.');
   if (input.runAt.getTime() < (input.now ?? new Date()).getTime() + 60_000) throw new WorkflowError('Choose a time at least one minute from now.', 'time_in_past');
   return db.transaction(async (tx) => {
-    const moved = await tx.update(publishingJobs).set({ runAt: input.runAt, updatedAt: new Date() })
-      .where(and(eq(publishingJobs.draftId, draft.id), eq(publishingJobs.status, 'queued'))).returning({ id: publishingJobs.id });
-    if (!moved.length) throw new WorkflowError('The post is already being published.', 'job_running');
-    const [row] = await tx.update(contentDrafts).set({ scheduledAt: input.runAt, timezone: input.timezone, updatedAt: new Date() }).where(eq(contentDrafts.id, draft.id)).returning();
+    // updated_at always changes, so a moved job always counts as an affected row.
+    const moved = affectedRows(await tx.update(publishingJobs).set({ runAt: input.runAt, updatedAt: new Date() })
+      .where(and(eq(publishingJobs.draftId, draft.id), eq(publishingJobs.status, 'queued'))));
+    if (!moved) throw new WorkflowError('The post is already being published.', 'job_running');
+    const row = await updateRow(tx as unknown as Db, contentDrafts, draft.id, { scheduledAt: input.runAt, timezone: input.timezone, updatedAt: new Date() });
     await logActivity(tx as unknown as Db, { ownerId: input.ownerId, draftId: draft.id, type: 'rescheduled', message: `"${draft.title}" moved to ${input.runAt.toISOString()} (${input.timezone})` });
-    return row!;
+    return row;
   });
 }
 
 export async function archiveDraft(db: Db, ownerId: string, draftId: string) {
   const draft = await ownedDraft(db, ownerId, draftId);
   const status = nextStatus(draft.status as DraftStatus, 'archive');
-  const [row] = await db.update(contentDrafts).set({ status, updatedAt: new Date() }).where(eq(contentDrafts.id, draft.id)).returning();
-  return row!;
+  return updateRow(db, contentDrafts, draft.id, { status, updatedAt: new Date() });
 }
 
 export async function getDraftDetail(db: Db, ownerId: string, draftId: string) {

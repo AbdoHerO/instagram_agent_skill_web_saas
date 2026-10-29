@@ -1,42 +1,53 @@
 # Deployment
 
-Nothing has been deployed. These are the steps for a first controlled release; each production action (creating
-infrastructure, setting secrets, enabling publishing) is the owner's decision.
+Production runs on the owner's **CloudOps** hosting panel as the Next.js website `agent-intg`, at
+**https://agent-intg.abdocloud.com**, deployed from the `main` branch of this repository. Each production action
+(creating the website, setting secrets, enabling publishing) is the owner's decision.
 
 ## What runs
 
-| Process | Command | Notes |
+| Part | On CloudOps | Notes |
 |---|---|---|
-| Web app | `npm run build` then `npm run start` (port 3100) | Behind HTTPS (reverse proxy or platform) |
-| Worker | `npm run worker` | Exactly one or more instances; jobs are claimed with `SKIP LOCKED`, so several workers are safe |
-| Database | PostgreSQL 14+ | `npm run db:migrate` on each release (idempotent) |
-| Media | S3-compatible bucket (`MEDIA_STORAGE=s3`) | Meta downloads from a pre-signed URL; or local disk + public `MEDIA_PUBLIC_BASE_URL` |
-| Python 3 | `python3` on the server | For the skills' tools; without it, drafts are created and the checks are marked "not run" |
+| Web app | Website type **Next.js**, 1024 MB, health path `/api/health` | `npm ci` then `npm run build` from Git; `next start` on 127.0.0.1 behind Nginx and Cloudflare, two slots (zero-downtime switch, automatic rollback if the health check fails) |
+| Database | **MySQL 8** created by CloudOps (`co_agent_intg`) | CloudOps writes `DB_SOCKET`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` into the website's `.env`; `DB_AUTO_MIGRATE=true` applies pending migrations when the app starts (a failed migration fails the deployment before any switch) |
+| Media | `MEDIA_STORAGE=local` in the website's `shared/storage/media` (kept across deployments, in CloudOps backups) | Served publicly at `MEDIA_PUBLIC_BASE_URL/media/…` so Meta can download it |
+| Python 3 | `python3` on the server | The skills' tools; without it, drafts are created and the checks are marked "not run" |
+| Worker | **not deployed** | Publishing is disabled; CloudOps runs one process per Next.js website. Before enabling publishing, the worker (`npm run worker`) needs its own supervised process |
 
-Any Node 20+ host works (a VM with systemd/PM2, a container platform). A Docker image needs Node 20, Python 3 and the
-project files including `.claude/skills` and `docs/business-context.md`.
+## Configuration (the website's Environment page in CloudOps)
 
-## Configuration
+Secrets are entered on the server only (CloudOps keeps `.env` at mode 0600, outside the release, never in Git):
 
-Set every variable of `.env.example` in the host's **secret manager** (not in files committed to Git):
-`APP_URL=https://<domain>`, `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY` (32 random bytes, base64; losing it means reconnecting
-Instagram), `ANTHROPIC_API_KEY`, `META_APP_ID`, `META_APP_SECRET`, `META_LOGIN_CONFIG_ID`,
-`META_REDIRECT_URI=https://<domain>/api/meta/oauth/callback` (registered in the Meta app), S3 settings,
-`ECOMMERCE_API_URL` (production e-commerce API), `PUBLISHING_MODE=disabled` until the first live test is approved.
+| Variable | Value |
+|---|---|
+| `APP_URL` | `https://agent-intg.abdocloud.com` |
+| `META_REDIRECT_URI` | `https://agent-intg.abdocloud.com/api/meta/oauth/callback` (also saved in the Meta login configuration) |
+| `TOKEN_ENCRYPTION_KEY` | 32 random bytes, base64, generated for production (losing it means reconnecting Instagram) |
+| `ANTHROPIC_API_KEY`, `ANTHROPIC_WORKSPACE_ID` | Claude Console |
+| `META_APP_ID`, `META_APP_SECRET`, `META_LOGIN_CONFIG_ID` | Meta App Dashboard (see [meta-setup.md](meta-setup.md)) |
+| `MEDIA_STORAGE`, `MEDIA_LOCAL_DIR`, `MEDIA_PUBLIC_BASE_URL` | `local`, the website's `shared/storage/media`, `https://agent-intg.abdocloud.com` |
+| `DB_AUTO_MIGRATE` | `true` |
+| `PUBLISHING_MODE` | `disabled` until the owner approves a first live post |
+| `DB_*` | written by CloudOps when it creates the database |
 
-## First release checklist
+`ECOMMERCE_API_URL` stays empty while the e-commerce API is only on the local network.
 
-1. Database created, `npm run db:migrate`, `npm run user:create` for each person.
-2. HTTPS domain; redirect URI registered in Meta exactly as configured.
-3. Connect the Instagram account; *Check connection* shows the three permissions granted.
-4. Generate and approve a test post; schedule it with `PUBLISHING_MODE=disabled` and confirm the worker reports
-   "Publishing is disabled… Nothing was sent".
-5. With the owner's explicit approval: set `PUBLISHING_MODE=live`, enable publishing in Settings (type PUBLISH),
-   schedule one real post, watch it in the post history (container, status, media ID).
-6. Back up the database (daily) and keep `TOKEN_ENCRYPTION_KEY` in the secret manager.
+## Deploying a change
 
-## Rollback
+1. Merge into `main` and push.
+2. CloudOps → the website → **Deploy now** (or `cloudops:deploy agent-intg` on the server). The new release starts on the
+   inactive slot, applies migrations, must answer `/api/health`, then takes the traffic.
+3. A failed deployment leaves the previous release serving. **Revert** in CloudOps goes back to an older release (a
+   migration is not undone: keep migrations backward compatible).
 
-`PUBLISHING_MODE=disabled` stops all publishing immediately (queued jobs fail with a clear message, nothing is sent).
-Deploy the previous build; migrations are additive. Revoke Instagram access from Business Settings → Integrations →
-Connected apps if needed.
+## Meta app settings for this address
+
+- Unified login configuration → **Redirect URL**: `https://agent-intg.abdocloud.com/api/meta/oauth/callback`.
+- App settings → Basic: **Privacy Policy URL** `https://agent-intg.abdocloud.com/privacy`, **Terms of Service URL**
+  `https://agent-intg.abdocloud.com/terms`, **User data deletion** → *Data deletion instructions URL*
+  `https://agent-intg.abdocloud.com/data-deletion`.
+
+## Rollback and kill switch
+
+`PUBLISHING_MODE=disabled` stops all publishing (and Settings → publishing must also be on for any post to go out).
+Instagram access is revoked from Business Settings → Integrations → Connected apps.

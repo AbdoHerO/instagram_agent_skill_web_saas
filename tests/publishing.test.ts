@@ -190,4 +190,13 @@ describe('publishing through the official API', () => {
     expect(first.map((j) => j.id)).toContain(job.id);
     expect(second.map((j) => j.id)).not.toContain(job.id);
   });
+
+  it('gives each due job to exactly one of several workers claiming at the same time', async () => {
+    const jobs = await Promise.all([dueJob(), dueJob(), dueJob()]);
+    const ids = jobs.map(({ job }) => job.id);
+    const now = new Date(Date.now() + 1000);
+    const claims = await Promise.all(['w1', 'w2', 'w3', 'w4'].map((worker) => claimDueJobs(db, worker, 2, now)));
+    const claimed = claims.flat().map((j) => j.id).filter((id) => ids.includes(id));
+    expect(claimed.sort()).toEqual([...ids].sort()); // every job claimed, none twice
+  });
 });

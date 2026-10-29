@@ -1,7 +1,7 @@
 import { and, eq, gt, isNull, lt } from 'drizzle-orm';
 
 import { randomToken, sha256 } from '@/server/crypto';
-import type { Db } from '@/server/db';
+import { affectedRows, type Db } from '@/server/db';
 import { oauthStates } from '@/server/db/schema';
 
 import { graphRequest, missingConfig, type MetaConfig } from './graph';
@@ -58,10 +58,10 @@ export async function createOAuthState(db: Db, userId: string): Promise<string> 
 /** Valid only once, only for the user who started the login, only before it expires. */
 export async function consumeOAuthState(db: Db, userId: string, state: string | null): Promise<void> {
   if (!state || state.length > 200) throw new OAuthError('Missing or malformed state parameter.', 'invalid_state');
+  // One atomic UPDATE: of two concurrent callbacks with the same state, only one changes the row.
   const used = await db.update(oauthStates).set({ usedAt: new Date() })
-    .where(and(eq(oauthStates.stateHash, sha256(state)), eq(oauthStates.userId, userId), isNull(oauthStates.usedAt), gt(oauthStates.expiresAt, new Date())))
-    .returning({ id: oauthStates.id });
-  if (!used.length) throw new OAuthError('This login link is invalid or expired. Start the connection again.', 'invalid_state');
+    .where(and(eq(oauthStates.stateHash, sha256(state)), eq(oauthStates.userId, userId), isNull(oauthStates.usedAt), gt(oauthStates.expiresAt, new Date())));
+  if (affectedRows(used) !== 1) throw new OAuthError('This login link is invalid or expired. Start the connection again.', 'invalid_state');
 }
 
 export function authorizeUrl(config: MetaConfig, state: string): string {

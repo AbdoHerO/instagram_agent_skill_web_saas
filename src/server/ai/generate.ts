@@ -8,6 +8,7 @@ import type { ContentPayload } from '@/server/content/types';
 import type { DraftKind } from '@/server/content/workflow';
 import type { Db } from '@/server/db';
 import { aiGenerations, brandProfiles } from '@/server/db/schema';
+import { pruneAiGenerations } from '@/server/retention';
 import { runSkillChecks, type ToolRunner } from '@/server/skills/tools';
 import { loadVoiceFile, skillsFor } from '@/server/skills/registry';
 
@@ -145,5 +146,6 @@ export async function generateDraft(deps: GenerateDeps, input: { ownerId: string
     ...logBase, draftId: draft.id, status: 'succeeded', stopReason, durationMs: Date.now() - started,
     inputTokens: usage.input_tokens, outputTokens: usage.output_tokens, cacheReadTokens: usage.cache_read_input_tokens ?? null,
   });
+  await pruneAiGenerations(deps.db, input.ownerId);
   return { draft, version };
 }

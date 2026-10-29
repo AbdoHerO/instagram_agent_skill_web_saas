@@ -1,6 +1,6 @@
 # Architecture
 
-One Next.js application (UI + server actions + route handlers) and one background worker, sharing a PostgreSQL
+One Next.js application (UI + server actions + route handlers) and one background worker, sharing a MySQL
 database. The AI service, the approval workflow and the publishing service are separate modules under `src/server`.
 
 ```
@@ -8,7 +8,7 @@ database. The AI service, the approval workflow and the publishing service are s
                                                                     │
             src/server/ai          ─ Claude (Anthropic SDK)         │  (generate: never schedules or posts)
             src/server/skills      ─ .claude/skills SKILL.md + Python tools
-            src/server/catalog     ─ e-commerce API (GET only)       ├── PostgreSQL (Drizzle)
+            src/server/catalog     ─ e-commerce API (GET only)       ├── MySQL 8 (Drizzle)
             src/server/content     ─ drafts, versions, approvals, scheduling rules
             src/server/meta        ─ Unified Login, accounts, insights
             src/server/media       ─ local disk or S3                │
@@ -45,7 +45,7 @@ outputs are recorded.
 
 ## Publishing (`src/server/jobs`)
 
-- **Queue**: `publishing_jobs` rows. The worker claims due jobs with `FOR UPDATE SKIP LOCKED` (no double claim), takes
+- **Queue**: `publishing_jobs` rows. The worker claims due jobs with one atomic `UPDATE … ORDER BY run_at LIMIT n` that stamps them with its id and the claim time (InnoDB locks and re-checks each row: no double claim), takes
   back jobs left `running` for 15 minutes (crashed worker), polls every `WORKER_POLL_SECONDS`.
 - **Checks at publish time**: draft still `scheduled`; approved version = current version = job version; last approval
   decision is `approved` with the same content hash; `PUBLISHING_MODE=live` **and** Settings → publishing on; account
@@ -54,7 +54,7 @@ outputs are recorded.
 - **Steps**: create container (`POST /{ig-user-id}/media`, image_url or media_type=REELS + video_url) → save container ID →
   status (`GET /{container-id}?fields=status_code`, re-checked every minute while `IN_PROGRESS`, 15 minutes max) →
   `POST /{ig-user-id}/media_publish` → save the media ID.
-- **No double publish**: one live job per version (partial unique index on `idempotency_key`), the container ID is
+- **No double publish**: one live job per version (MySQL has no partial index: a generated column holds the key only while the job is queued, running or succeeded, under a unique index; another does the same for one live job per draft), the container ID is
   stored before publishing, a container already `PUBLISHED` or a job with a media ID is never published again.
 - **Retries**: transient errors (5xx, rate limits, network, Meta "transient") retry after 1 min, 5 min, 15 min, 1 h, up to
   5 attempts; auth errors mark the account `needs_reauth`; permission and validation errors fail at once. Each step is

@@ -1,23 +1,20 @@
-import type { Db } from '@/server/db';
+import { insertRow, type Db } from '@/server/db';
 import { instagramAccounts, mediaAssets, users } from '@/server/db/schema';
 import type { ContentPayload } from '@/server/content/types';
 
 export async function createUser(db: Db, email = `owner${Math.random().toString(36).slice(2)}@example.test`) {
-  const [user] = await db.insert(users).values({ email, name: 'Owner', passwordHash: 'not-a-real-hash' }).returning();
-  return user!;
+  return insertRow(db, users, { email, name: 'Owner', passwordHash: 'not-a-real-hash' });
 }
 
 export async function createAccount(db: Db, ownerId: string, overrides: Partial<typeof instagramAccounts.$inferInsert> = {}) {
-  const [account] = await db.insert(instagramAccounts).values({
+  return insertRow(db, instagramAccounts, {
     ownerId, igUserId: `17841${Math.floor(Math.random() * 1e9)}`, username: 'eurodigital.test', status: 'connected',
     grantedScopes: ['instagram_basic', 'instagram_content_publish'], tokenCiphertext: null, ...overrides,
-  }).returning();
-  return account!;
+  });
 }
 
 export async function createMedia(db: Db, ownerId: string, mimeType: 'image/jpeg' | 'video/mp4' = 'image/jpeg') {
-  const [asset] = await db.insert(mediaAssets).values({ ownerId, storage: 'local', storageKey: `test/${Math.random()}.jpg`, mimeType, sizeBytes: 1000, sha256: 'x' }).returning();
-  return asset!;
+  return insertRow(db, mediaAssets, { ownerId, storage: 'local', storageKey: `test/${Math.random()}.jpg`, mimeType, sizeBytes: 1000, sha256: 'x' });
 }
 
 export function payload(overrides: Partial<ContentPayload> = {}): ContentPayload {

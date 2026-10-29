@@ -7,7 +7,8 @@ import { getBrand } from '@/server/brand';
 import { draftCounts, failedJobCount, listDrafts } from '@/server/content/service';
 import { encryptSecret, decryptSecret } from '@/server/crypto';
 import type { Db } from '@/server/db';
-import { sessions, users } from '@/server/db/schema';
+import { aiGenerations, brandProfiles, sessions, users } from '@/server/db/schema';
+import { pruneAiGenerations } from '@/server/retention';
 
 import { createTestDb } from './helpers/db';
 
@@ -63,5 +64,22 @@ describe('dashboard data for a new account', () => {
     expect(await recentActivity(db, user.id)).toEqual([]);
     const brand = await getBrand(db, user.id);
     expect(brand).toMatchObject({ timezone: 'Africa/Casablanca', publishingEnabled: false, defaultLanguage: 'fr' });
+  });
+});
+
+describe('retention', () => {
+  it('deletes AI generation records older than the retention set in Settings, and only those', async () => {
+    const user = await createUserAccount(db, { email: 'retention@example.test', name: 'R', password: 'a long enough password' });
+    const other = await createUserAccount(db, { email: 'other-retention@example.test', name: 'O', password: 'a long enough password' });
+    await db.update(brandProfiles).set({ aiRetentionDays: 30 }).where(eq(brandProfiles.ownerId, user.id));
+    const now = new Date('2026-10-29T12:00:00Z');
+    const daysAgo = (days: number) => new Date(now.getTime() - days * 86_400_000);
+    const record = (ownerId: string, createdAt: Date) => ({ ownerId, request: { topic: 'x' }, model: 'claude-opus-5-5', status: 'succeeded', createdAt });
+    await db.insert(aiGenerations).values([record(user.id, daysAgo(31)), record(user.id, daysAgo(29)), record(other.id, daysAgo(400))]);
+
+    expect(await pruneAiGenerations(db, user.id, now)).toBe(1);
+    const left = await db.select({ ownerId: aiGenerations.ownerId, createdAt: aiGenerations.createdAt }).from(aiGenerations);
+    expect(left.filter((r) => r.ownerId === user.id).map((r) => r.createdAt.toISOString())).toEqual([daysAgo(29).toISOString()]);
+    expect(left.filter((r) => r.ownerId === other.id)).toHaveLength(1); // another owner, its own retention (180 days by default) applies at its turn
   });
 });

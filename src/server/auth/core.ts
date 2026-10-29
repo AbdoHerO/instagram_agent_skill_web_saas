@@ -1,8 +1,8 @@
 import { hash, verify } from '@node-rs/argon2';
-import { and, eq, gt, lt, sql } from 'drizzle-orm';
+import { and, eq, gt, lt } from 'drizzle-orm';
 
 import { randomToken, sha256 } from '@/server/crypto';
-import type { Db } from '@/server/db';
+import { insertRow, type Db } from '@/server/db';
 import { brandProfiles, sessions, users } from '@/server/db/schema';
 
 /**
@@ -21,9 +21,9 @@ export async function hashPassword(password: string): Promise<string> {
 export async function createUserAccount(db: Db, input: { email: string; name: string; password: string; role?: 'owner' | 'editor' }) {
   const passwordHash = await hashPassword(input.password);
   return db.transaction(async (tx) => {
-    const [user] = await tx.insert(users).values({ email: input.email.trim().toLowerCase(), name: input.name.trim(), passwordHash, role: input.role ?? 'owner' }).returning();
-    await tx.insert(brandProfiles).values({ ownerId: user!.id, name: 'Euro Digital' });
-    return user!;
+    const user = await insertRow(tx as unknown as Db, users, { email: input.email.trim().toLowerCase(), name: input.name.trim(), passwordHash, role: input.role ?? 'owner' });
+    await tx.insert(brandProfiles).values({ ownerId: user.id, name: 'Euro Digital' });
+    return user;
   });
 }
 
@@ -31,7 +31,8 @@ export async function createUserAccount(db: Db, input: { email: string; name: st
 let dummyHash: Promise<string> | null = null;
 
 export async function verifyCredentials(db: Db, email: string, password: string) {
-  const [user] = await db.select().from(users).where(sql`lower(${users.email}) = ${email.trim().toLowerCase()}`);
+  // Emails are stored lower-case and the column's collation is case-insensitive.
+  const [user] = await db.select().from(users).where(eq(users.email, email.trim().toLowerCase()));
   dummyHash ??= hash(randomToken());
   const ok = await verify(user?.passwordHash ?? (await dummyHash), password).catch(() => false);
   return ok && user ? user : null;

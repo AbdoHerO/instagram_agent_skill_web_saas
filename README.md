@@ -9,7 +9,7 @@ It is independent of the e-commerce project: it only **reads** product data from
 
 | | |
 |---|---|
-| Stack | Next.js 16 (App Router) · TypeScript · Tailwind CSS 4 · PostgreSQL + Drizzle ORM · Anthropic SDK · durable job queue in PostgreSQL · local or S3 media storage |
+| Stack | Next.js 16 (App Router) · TypeScript · Tailwind CSS 4 · MySQL 8 + Drizzle ORM · Anthropic SDK · durable job queue in MySQL · local or S3 media storage |
 | AI | `claude-opus-5-5` by default (`CLAUDE_MODEL`), structured output validated with Zod, skill instructions from `.claude/skills`, the skills' Python tools run on every draft |
 | Instagram | Instagram API with **Unified Login** (Facebook Login for Business, system-user token), `graph.facebook.com` |
 | Docs | [architecture](docs/architecture.md) · [business context](docs/business-context.md) · [Meta setup](docs/meta-setup.md) · [Claude skills](docs/claude-skills.md) · [deployment](docs/deployment.md) |
@@ -18,7 +18,7 @@ It is independent of the e-commerce project: it only **reads** product data from
 
 - Node.js ≥ 20.19 (`node -v`)
 - Python 3 on PATH as `python3` (the skills' tools; standard library only)
-- PostgreSQL 14+ (this PC: PostgreSQL 18 service on port 5432)
+- MySQL 8 or MariaDB 10.4+ (this PC: XAMPP's MariaDB on port 3306; production: MySQL 8.0 on CloudOps)
 - An Anthropic API key, and for Instagram: the Meta app (see [docs/meta-setup.md](docs/meta-setup.md))
 
 ## 2. Installation
@@ -32,15 +32,16 @@ npm run skills:check        # verifies the 13 installed skills against vendor/
 ## 3. Database
 
 ```powershell
-# Creates the role and database, writes DATABASE_URL and a TOKEN_ENCRYPTION_KEY into .env.local.
-# Asks for the PostgreSQL "postgres" password in a hidden prompt (used once, never stored).
+# Creates the database (and a user), writes DATABASE_URL and a TOKEN_ENCRYPTION_KEY into .env.local.
+# Asks for the MySQL root password in a hidden prompt (used once, never stored).
 powershell -ExecutionPolicy Bypass -File scripts\setup-database.ps1
+#   XAMPP (root without a password): add -NoRootPassword; add -UseRoot to connect as that local root account
 npm run db:migrate
 npm run user:create -- --email you@example.com --name "Your name"   # password asked in a hidden prompt
 ```
 
-No PostgreSQL at hand? `npm run db:local` starts an embedded PostgreSQL (PGlite) on port 5433 for trying the app
-(`DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5433/postgres?sslmode=disable`). Not for production.
+The schema is in `src/server/db/schema.ts`; `npm run db:generate` writes a new migration to `drizzle/` after a change.
+On the server, `DB_AUTO_MIGRATE=true` applies pending migrations when the app starts.
 
 ## 4. Configuration
 
@@ -83,16 +84,18 @@ From another device on the LAN: `$env:DEV_ALLOWED_ORIGINS="192.168.1.7"; npx nex
 ## 7. Checks
 
 ```powershell
-npm run verify     # typecheck + lint + tests (37 tests, including the real skill scripts and an in-process PostgreSQL)
+npm run verify     # typecheck + lint + tests (the real skill scripts, and a throwaway MySQL database per test file)
 npm run build
 ```
 
-Automated tests never call Meta or Claude (mocked) and never publish.
+Automated tests never call Meta or Claude (mocked) and never publish. They need a local MySQL/MariaDB where they may
+create databases named `agent_ai_intg_test_*` (dropped afterwards): `TEST_MYSQL_URL`, default `mysql://root@127.0.0.1:3306`.
 
 ## 8. Deployment
 
-See [docs/deployment.md](docs/deployment.md): a Node host for `next start` + a second process for `npm run worker`,
-managed PostgreSQL, S3-compatible storage, HTTPS domain for the redirect URI, secrets in the host's secret manager.
+See [docs/deployment.md](docs/deployment.md). Production runs on the owner's CloudOps server as the Next.js website
+`agent-intg` at https://agent-intg.abdocloud.com (MySQL database created by CloudOps, deployed from `main`).
+Public pages for Meta's app settings: `/privacy`, `/terms`, `/data-deletion`.
 
 ## 9. Known limitations and outstanding setup
 

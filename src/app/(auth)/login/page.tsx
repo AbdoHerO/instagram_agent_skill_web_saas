@@ -1,7 +1,9 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { currentUser } from '@/server/auth/session';
+import { isDatabaseConfigured } from '@/server/db';
 import { Notice } from '@/components/ui';
 
 import { LoginForm } from './login-form';
@@ -11,7 +13,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function LoginPage() {
   if (await currentUser()) redirect('/');
-  const databaseReady = Boolean(process.env.DATABASE_URL);
+  const databaseReady = isDatabaseConfigured();
   return (
     <main className="mx-auto flex min-h-dvh max-w-sm flex-col justify-center px-4">
       <h1 className="text-2xl font-semibold">Instagram Studio</h1>
@@ -24,6 +26,11 @@ export default async function LoginPage() {
         )}
       </div>
       <p className="mt-4 text-xs text-muted">Accounts are created on the server with <code>npm run user:create</code>.</p>
+      <nav className="mt-6 flex gap-4 text-xs text-muted">
+        <Link href="/privacy" className="hover:underline">Privacy policy</Link>
+        <Link href="/terms" className="hover:underline">Terms of service</Link>
+        <Link href="/data-deletion" className="hover:underline">Data deletion</Link>
+      </nav>
     </main>
   );
 }

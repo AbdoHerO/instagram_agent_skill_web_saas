@@ -1,26 +1,46 @@
+import { randomUUID } from 'node:crypto';
+
 import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
+  customType,
+  datetime,
   index,
-  integer,
-  jsonb,
-  pgTable,
+  int,
+  mysqlTable,
   text,
-  timestamp,
   uniqueIndex,
-  uuid,
-} from 'drizzle-orm/pg-core';
+  varchar,
+} from 'drizzle-orm/mysql-core';
 
 /**
- * Persistent data. Every row that belongs to someone carries `owner_id`, and
- * every query in src/server filters on it. Secrets are never stored in
- * plaintext: passwords are argon2 hashes, session and OAuth state tokens are
- * SHA-256 hashes, Meta access tokens are AES-256-GCM ciphertext.
+ * Persistent data (MySQL 8; the tests also run on MariaDB 10.4+). Every row that
+ * belongs to someone carries `owner_id`, and every query in src/server filters
+ * on it. Secrets are never stored in plaintext: passwords are argon2 hashes,
+ * session and OAuth state tokens are SHA-256 hashes, Meta access tokens are
+ * AES-256-GCM ciphertext.
+ *
+ * Portable choices: ids are UUIDs chosen by the application, times are UTC
+ * `datetime(3)` written by the application, and JSON and lists are stored as
+ * JSON text (MariaDB's JSON type is text, MySQL's is not; text behaves the same
+ * on both).
  */
 
-const created = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
-const updated = () => timestamp('updated_at', { withTimezone: true }).notNull().defaultNow();
+/** JSON stored as text, parsed on read. */
+const jsonText = <T>(name: string) =>
+  customType<{ data: T; driverData: string }>({
+    dataType: () => 'longtext',
+    toDriver: (value) => JSON.stringify(value),
+    fromDriver: (value) => JSON.parse(value) as T,
+  })(name);
+
+const id = () => varchar('id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID());
+const ref = (name: string) => varchar(name, { length: 36 });
+const time = (name: string) => datetime(name, { mode: 'date', fsp: 3 });
+const created = () => time('created_at').notNull().$defaultFn(() => new Date());
+const updated = () => time('updated_at').notNull().$defaultFn(() => new Date());
+const longText = (name: string) => text(name).notNull().$defaultFn(() => '');
 
 export const DRAFT_STATUSES = ['draft', 'awaiting_approval', 'approved', 'rejected', 'scheduled', 'publishing', 'published', 'failed', 'archived'] as const;
 export const DRAFT_KINDS = ['feed_image', 'reel', 'carousel', 'story', 'plan', 'idea'] as const;
@@ -29,34 +49,35 @@ export const ACCOUNT_STATUSES = ['connected', 'needs_reauth', 'error', 'disconne
 
 const inList = (column: string, values: readonly string[]) => sql.raw(`${column} in (${values.map((v) => `'${v}'`).join(', ')})`);
 
-export const users = pgTable('users', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  email: text('email').notNull(),
-  name: text('name').notNull(),
-  passwordHash: text('password_hash').notNull(),
-  role: text('role').notNull().default('owner'),
+export const users = mysqlTable('users', {
+  id: id(),
+  /** Stored lower-case; the unique index is case-insensitive as well (utf8mb4 *_ci collations). */
+  email: varchar('email', { length: 320 }).notNull(),
+  name: varchar('name', { length: 200 }).notNull(),
+  passwordHash: varchar('password_hash', { length: 255 }).notNull(),
+  role: varchar('role', { length: 16 }).notNull().default('owner'),
   createdAt: created(),
-}, (t) => [uniqueIndex('users_email_unique').on(sql`lower(${t.email})`), check('users_role_check', inList('role', ['owner', 'editor']))]);
+}, (t) => [uniqueIndex('users_email_unique').on(t.email), check('users_role_check', inList('role', ['owner', 'editor']))]);
 
-export const sessions = pgTable('sessions', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  tokenHash: text('token_hash').notNull(),
-  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+export const sessions = mysqlTable('sessions', {
+  id: id(),
+  userId: ref('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  tokenHash: varchar('token_hash', { length: 64 }).notNull(),
+  expiresAt: time('expires_at').notNull(),
   createdAt: created(),
 }, (t) => [uniqueIndex('sessions_token_hash_unique').on(t.tokenHash), index('sessions_user_idx').on(t.userId)]);
 
-export const brandProfiles = pgTable('brand_profiles', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  name: text('name').notNull(),
-  voiceMarkdown: text('voice_markdown').notNull().default(''),
-  defaultLanguage: text('default_language').notNull().default('fr'),
-  timezone: text('timezone').notNull().default('Africa/Casablanca'),
+export const brandProfiles = mysqlTable('brand_profiles', {
+  id: id(),
+  ownerId: ref('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 200 }).notNull(),
+  voiceMarkdown: longText('voice_markdown'),
+  defaultLanguage: varchar('default_language', { length: 8 }).notNull().default('fr'),
+  timezone: varchar('timezone', { length: 64 }).notNull().default('Africa/Casablanca'),
   /** Second switch next to PUBLISHING_MODE: both must allow publishing. Off by default. */
   publishingEnabled: boolean('publishing_enabled').notNull().default(false),
-  defaultPostTime: text('default_post_time').notNull().default('19:00'),
-  aiRetentionDays: integer('ai_retention_days').notNull().default(180),
+  defaultPostTime: varchar('default_post_time', { length: 5 }).notNull().default('19:00'),
+  aiRetentionDays: int('ai_retention_days').notNull().default(180),
   createdAt: created(),
   updatedAt: updated(),
 }, (t) => [
@@ -64,22 +85,22 @@ export const brandProfiles = pgTable('brand_profiles', {
   check('brand_profiles_language_check', inList('default_language', ['fr', 'ar', 'en'])),
 ]);
 
-export const instagramAccounts = pgTable('instagram_accounts', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  igUserId: text('ig_user_id').notNull(),
-  username: text('username').notNull(),
-  name: text('name'),
+export const instagramAccounts = mysqlTable('instagram_accounts', {
+  id: id(),
+  ownerId: ref('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  igUserId: varchar('ig_user_id', { length: 64 }).notNull(),
+  username: varchar('username', { length: 255 }).notNull(),
+  name: varchar('name', { length: 255 }),
   profilePictureUrl: text('profile_picture_url'),
-  clientBusinessId: text('client_business_id'),
-  loginConfigId: text('login_config_id'),
+  clientBusinessId: varchar('client_business_id', { length: 64 }),
+  loginConfigId: varchar('login_config_id', { length: 64 }),
   /** AES-256-GCM ciphertext of the Business Integration System User access token (variable length). */
   tokenCiphertext: text('token_ciphertext'),
-  tokenType: text('token_type'),
-  tokenExpiresAt: timestamp('token_expires_at', { withTimezone: true }),
-  grantedScopes: text('granted_scopes').array().notNull().default(sql`'{}'::text[]`),
-  status: text('status').notNull().default('connected'),
-  lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
+  tokenType: varchar('token_type', { length: 32 }),
+  tokenExpiresAt: time('token_expires_at'),
+  grantedScopes: jsonText<string[]>('granted_scopes').notNull().$defaultFn(() => []),
+  status: varchar('status', { length: 16 }).notNull().default('connected'),
+  lastCheckedAt: time('last_checked_at'),
   lastError: text('last_error'),
   connectedAt: created(),
   updatedAt: updated(),
@@ -88,24 +109,24 @@ export const instagramAccounts = pgTable('instagram_accounts', {
   check('instagram_accounts_status_check', inList('status', ACCOUNT_STATUSES)),
 ]);
 
-export const oauthStates = pgTable('oauth_states', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  stateHash: text('state_hash').notNull(),
-  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-  usedAt: timestamp('used_at', { withTimezone: true }),
+export const oauthStates = mysqlTable('oauth_states', {
+  id: id(),
+  userId: ref('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  stateHash: varchar('state_hash', { length: 64 }).notNull(),
+  expiresAt: time('expires_at').notNull(),
+  usedAt: time('used_at'),
   createdAt: created(),
 }, (t) => [uniqueIndex('oauth_states_hash_unique').on(t.stateHash)]);
 
-export const mediaAssets = pgTable('media_assets', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  storage: text('storage').notNull(),
-  storageKey: text('storage_key').notNull(),
-  mimeType: text('mime_type').notNull(),
-  sizeBytes: integer('size_bytes').notNull(),
-  sha256: text('sha256').notNull(),
-  originalName: text('original_name'),
+export const mediaAssets = mysqlTable('media_assets', {
+  id: id(),
+  ownerId: ref('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  storage: varchar('storage', { length: 8 }).notNull(),
+  storageKey: varchar('storage_key', { length: 255 }).notNull(),
+  mimeType: varchar('mime_type', { length: 64 }).notNull(),
+  sizeBytes: int('size_bytes').notNull(),
+  sha256: varchar('sha256', { length: 64 }).notNull(),
+  originalName: varchar('original_name', { length: 255 }),
   createdAt: created(),
 }, (t) => [
   index('media_assets_owner_idx').on(t.ownerId),
@@ -113,19 +134,19 @@ export const mediaAssets = pgTable('media_assets', {
   check('media_assets_mime_check', inList('mime_type', ['image/jpeg', 'video/mp4', 'image/png'])),
 ]);
 
-export const contentDrafts = pgTable('content_drafts', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  instagramAccountId: uuid('instagram_account_id').references(() => instagramAccounts.id, { onDelete: 'set null' }),
-  kind: text('kind').notNull(),
-  title: text('title').notNull(),
-  status: text('status').notNull().default('draft'),
-  currentVersionId: uuid('current_version_id'),
-  approvedVersionId: uuid('approved_version_id'),
-  scheduledAt: timestamp('scheduled_at', { withTimezone: true }),
-  timezone: text('timezone').notNull().default('Africa/Casablanca'),
-  publishedMediaId: text('published_media_id'),
-  publishedAt: timestamp('published_at', { withTimezone: true }),
+export const contentDrafts = mysqlTable('content_drafts', {
+  id: id(),
+  ownerId: ref('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  instagramAccountId: ref('instagram_account_id').references(() => instagramAccounts.id, { onDelete: 'set null' }),
+  kind: varchar('kind', { length: 16 }).notNull(),
+  title: varchar('title', { length: 255 }).notNull(),
+  status: varchar('status', { length: 24 }).notNull().default('draft'),
+  currentVersionId: ref('current_version_id'),
+  approvedVersionId: ref('approved_version_id'),
+  scheduledAt: time('scheduled_at'),
+  timezone: varchar('timezone', { length: 64 }).notNull().default('Africa/Casablanca'),
+  publishedMediaId: varchar('published_media_id', { length: 64 }),
+  publishedAt: time('published_at'),
   lastError: text('last_error'),
   createdAt: created(),
   updatedAt: updated(),
@@ -137,87 +158,97 @@ export const contentDrafts = pgTable('content_drafts', {
 ]);
 
 /** Immutable: a version is never updated; an edit creates the next version. */
-export const contentVersions = pgTable('content_versions', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  draftId: uuid('draft_id').notNull().references(() => contentDrafts.id, { onDelete: 'cascade' }),
-  version: integer('version').notNull(),
-  caption: text('caption').notNull().default(''),
-  hashtags: text('hashtags').array().notNull().default(sql`'{}'::text[]`),
-  payload: jsonb('payload').notNull().default(sql`'{}'::jsonb`),
-  mediaAssetId: uuid('media_asset_id').references(() => mediaAssets.id, { onDelete: 'set null' }),
-  validation: jsonb('validation').notNull().default(sql`'{}'::jsonb`),
-  contentHash: text('content_hash').notNull(),
-  createdBy: uuid('created_by').notNull().references(() => users.id),
+export const contentVersions = mysqlTable('content_versions', {
+  id: id(),
+  draftId: ref('draft_id').notNull().references(() => contentDrafts.id, { onDelete: 'cascade' }),
+  version: int('version').notNull(),
+  caption: longText('caption'),
+  hashtags: jsonText<string[]>('hashtags').notNull().$defaultFn(() => []),
+  payload: jsonText<unknown>('payload').notNull().$defaultFn(() => ({})),
+  mediaAssetId: ref('media_asset_id').references(() => mediaAssets.id, { onDelete: 'set null' }),
+  validation: jsonText<unknown>('validation').notNull().$defaultFn(() => ({})),
+  contentHash: varchar('content_hash', { length: 64 }).notNull(),
+  createdBy: ref('created_by').notNull().references(() => users.id),
   createdAt: created(),
 }, (t) => [uniqueIndex('content_versions_draft_version_unique').on(t.draftId, t.version)]);
 
-export const approvals = pgTable('approvals', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  draftId: uuid('draft_id').notNull().references(() => contentDrafts.id, { onDelete: 'cascade' }),
-  versionId: uuid('version_id').notNull().references(() => contentVersions.id, { onDelete: 'cascade' }),
-  userId: uuid('user_id').notNull().references(() => users.id),
-  decision: text('decision').notNull(),
+export const approvals = mysqlTable('approvals', {
+  id: id(),
+  draftId: ref('draft_id').notNull().references(() => contentDrafts.id, { onDelete: 'cascade' }),
+  versionId: ref('version_id').notNull().references(() => contentVersions.id, { onDelete: 'cascade' }),
+  userId: ref('user_id').notNull().references(() => users.id),
+  decision: varchar('decision', { length: 16 }).notNull(),
   note: text('note'),
-  contentHash: text('content_hash').notNull(),
+  contentHash: varchar('content_hash', { length: 64 }).notNull(),
   createdAt: created(),
 }, (t) => [
   index('approvals_draft_idx').on(t.draftId),
   check('approvals_decision_check', inList('decision', ['approved', 'rejected', 'invalidated'])),
 ]);
 
-export const publishingJobs = pgTable('publishing_jobs', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  draftId: uuid('draft_id').notNull().references(() => contentDrafts.id, { onDelete: 'cascade' }),
-  versionId: uuid('version_id').notNull().references(() => contentVersions.id),
-  instagramAccountId: uuid('instagram_account_id').notNull().references(() => instagramAccounts.id),
-  runAt: timestamp('run_at', { withTimezone: true }).notNull(),
-  status: text('status').notNull().default('queued'),
-  attempts: integer('attempts').notNull().default(0),
-  maxAttempts: integer('max_attempts').notNull().default(5),
-  lockedAt: timestamp('locked_at', { withTimezone: true }),
-  lockedBy: text('locked_by'),
+export const publishingJobs = mysqlTable('publishing_jobs', {
+  id: id(),
+  ownerId: ref('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  draftId: ref('draft_id').notNull().references(() => contentDrafts.id, { onDelete: 'cascade' }),
+  versionId: ref('version_id').notNull().references(() => contentVersions.id),
+  instagramAccountId: ref('instagram_account_id').notNull().references(() => instagramAccounts.id),
+  runAt: time('run_at').notNull(),
+  status: varchar('status', { length: 16 }).notNull().default('queued'),
+  attempts: int('attempts').notNull().default(0),
+  maxAttempts: int('max_attempts').notNull().default(5),
+  lockedAt: time('locked_at'),
+  lockedBy: varchar('locked_by', { length: 200 }),
   /** One live publish per approved version (`publish:<version id>`): a retry can never publish it twice. Failed and cancelled jobs stay as history. */
-  idempotencyKey: text('idempotency_key').notNull(),
-  containerId: text('container_id'),
-  containerCreatedAt: timestamp('container_created_at', { withTimezone: true }),
-  igMediaId: text('ig_media_id'),
+  idempotencyKey: varchar('idempotency_key', { length: 100 }).notNull(),
+  /**
+   * MySQL has no partial unique index: these generated columns hold the key (or
+   * the draft) only while the job is live and NULL otherwise, and a unique index
+   * on them allows any number of NULLs. `active_draft_id` is virtual because
+   * MySQL refuses a stored generated column over a cascading foreign key.
+   */
+  activeIdempotencyKey: varchar('active_idempotency_key', { length: 100 })
+    .generatedAlwaysAs(sql`(case when status in ('queued', 'running', 'succeeded') then idempotency_key end)`, { mode: 'stored' }),
+  activeDraftId: varchar('active_draft_id', { length: 36 })
+    .generatedAlwaysAs(sql`(case when status in ('queued', 'running') then draft_id end)`, { mode: 'virtual' }),
+  containerId: varchar('container_id', { length: 64 }),
+  containerCreatedAt: time('container_created_at'),
+  igMediaId: varchar('ig_media_id', { length: 64 }),
   lastError: text('last_error'),
-  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  finishedAt: time('finished_at'),
   createdAt: created(),
   updatedAt: updated(),
 }, (t) => [
-  uniqueIndex('publishing_jobs_idempotency_unique').on(t.idempotencyKey).where(sql`status in ('queued', 'running', 'succeeded')`),
+  uniqueIndex('publishing_jobs_idempotency_unique').on(t.activeIdempotencyKey),
   // At most one queued or running job per draft.
-  uniqueIndex('publishing_jobs_one_active_per_draft').on(t.draftId).where(sql`status in ('queued', 'running')`),
+  uniqueIndex('publishing_jobs_one_active_per_draft').on(t.activeDraftId),
   index('publishing_jobs_due_idx').on(t.status, t.runAt),
   check('publishing_jobs_status_check', inList('status', JOB_STATUSES)),
 ]);
 
-export const publishLogs = pgTable('publish_logs', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  jobId: uuid('job_id').notNull().references(() => publishingJobs.id, { onDelete: 'cascade' }),
-  draftId: uuid('draft_id').notNull().references(() => contentDrafts.id, { onDelete: 'cascade' }),
-  step: text('step').notNull(),
-  outcome: text('outcome').notNull(),
+export const publishLogs = mysqlTable('publish_logs', {
+  id: id(),
+  jobId: ref('job_id').notNull().references(() => publishingJobs.id, { onDelete: 'cascade' }),
+  draftId: ref('draft_id').notNull().references(() => contentDrafts.id, { onDelete: 'cascade' }),
+  step: varchar('step', { length: 64 }).notNull(),
+  outcome: varchar('outcome', { length: 32 }).notNull(),
   message: text('message'),
-  metaErrorCode: integer('meta_error_code'),
+  metaErrorCode: int('meta_error_code'),
   createdAt: created(),
 }, (t) => [index('publish_logs_draft_idx').on(t.draftId), index('publish_logs_job_idx').on(t.jobId)]);
 
-export const aiGenerations = pgTable('ai_generations', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  draftId: uuid('draft_id').references(() => contentDrafts.id, { onDelete: 'set null' }),
-  request: jsonb('request').notNull(),
-  model: text('model').notNull(),
-  skills: text('skills').array().notNull().default(sql`'{}'::text[]`),
-  status: text('status').notNull(),
-  stopReason: text('stop_reason'),
-  inputTokens: integer('input_tokens'),
-  outputTokens: integer('output_tokens'),
-  cacheReadTokens: integer('cache_read_tokens'),
-  durationMs: integer('duration_ms'),
+export const aiGenerations = mysqlTable('ai_generations', {
+  id: id(),
+  ownerId: ref('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  draftId: ref('draft_id').references(() => contentDrafts.id, { onDelete: 'set null' }),
+  request: jsonText<unknown>('request').notNull(),
+  model: varchar('model', { length: 100 }).notNull(),
+  skills: jsonText<string[]>('skills').notNull().$defaultFn(() => []),
+  status: varchar('status', { length: 16 }).notNull(),
+  stopReason: varchar('stop_reason', { length: 32 }),
+  inputTokens: int('input_tokens'),
+  outputTokens: int('output_tokens'),
+  cacheReadTokens: int('cache_read_tokens'),
+  durationMs: int('duration_ms'),
   error: text('error'),
   createdAt: created(),
 }, (t) => [
@@ -225,14 +256,14 @@ export const aiGenerations = pgTable('ai_generations', {
   check('ai_generations_status_check', inList('status', ['succeeded', 'failed', 'refused', 'invalid'])),
 ]);
 
-export const activity = pgTable('activity', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  draftId: uuid('draft_id').references(() => contentDrafts.id, { onDelete: 'set null' }),
-  type: text('type').notNull(),
-  level: text('level').notNull().default('info'),
+export const activity = mysqlTable('activity', {
+  id: id(),
+  ownerId: ref('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  draftId: ref('draft_id').references(() => contentDrafts.id, { onDelete: 'set null' }),
+  type: varchar('type', { length: 64 }).notNull(),
+  level: varchar('level', { length: 16 }).notNull().default('info'),
   message: text('message').notNull(),
-  readAt: timestamp('read_at', { withTimezone: true }),
+  readAt: time('read_at'),
   createdAt: created(),
 }, (t) => [
   index('activity_owner_created_idx').on(t.ownerId, t.createdAt),

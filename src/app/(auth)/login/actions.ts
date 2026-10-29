@@ -6,6 +6,7 @@ import type { ActionState } from '@/components/forms';
 import { verifyCredentials } from '@/server/auth/core';
 import { endSession, startSession } from '@/server/auth/session';
 import { getDb } from '@/server/db';
+import { pruneAiGenerations } from '@/server/retention';
 
 // Simple in-memory brake on repeated failures per email (per server process).
 const failures = new Map<string, { count: number; until: number }>();
@@ -24,6 +25,7 @@ export async function loginAction(_: ActionState, fd: FormData): Promise<ActionS
   }
   failures.delete(email);
   await startSession(user.id);
+  await pruneAiGenerations(getDb(), user.id).catch(() => 0); // retention never blocks a sign-in
   redirect('/');
 }
 

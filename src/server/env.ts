@@ -10,7 +10,16 @@ import { z } from 'zod';
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   APP_URL: z.url().default('http://localhost:3100'),
+  /** MySQL: mysql://user:password@host:3306/name. Or the DB_* settings below, as CloudOps writes them. */
   DATABASE_URL: z.string().min(1).optional(),
+  DB_HOST: z.string().optional(),
+  DB_PORT: z.coerce.number().int().optional(),
+  DB_SOCKET: z.string().optional(),
+  DB_DATABASE: z.string().optional(),
+  DB_USERNAME: z.string().optional(),
+  DB_PASSWORD: z.string().optional(),
+  /** true: apply pending migrations when the server starts (hosting without a shell). */
+  DB_AUTO_MIGRATE: z.enum(['true', 'false']).default('false'),
   /** 32 random bytes, base64: encrypts Meta tokens at rest (AES-256-GCM). */
   TOKEN_ENCRYPTION_KEY: z.string().optional(),
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(24 * 7),
@@ -78,7 +87,7 @@ export function resetEnvCache(): void {
 export function configStatus() {
   const e = env();
   return {
-    database: Boolean(e.DATABASE_URL),
+    database: Boolean(e.DATABASE_URL || (e.DB_DATABASE && e.DB_USERNAME)),
     encryptionKey: Boolean(e.TOKEN_ENCRYPTION_KEY),
     anthropic: Boolean(e.ANTHROPIC_API_KEY),
     ecommerceApi: Boolean(e.ECOMMERCE_API_URL),

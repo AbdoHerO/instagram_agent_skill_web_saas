@@ -22,8 +22,7 @@
     "user:create": "tsx scripts/create-user.ts",
     "skills:install": "node scripts/install-skills.mjs",
     "skills:check": "node scripts/install-skills.mjs --check",
-    "ai:ping": "tsx --conditions=react-server scripts/claude-ping.ts",
-    "db:local": "pglite-server --db=.data/pglite --port=5433 --max-connections=10"
+    "ai:ping": "tsx --conditions=react-server scripts/claude-ping.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.3.0",
@@ -32,19 +31,16 @@
     "@node-rs/argon2": "2.2.2",
     "drizzle-orm": "0.45.4",
     "lucide-react": "^1.62.0",
+    "mysql2": "^3.24.6",
     "next": "16.4.3",
-    "pg": "8.23.1",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "server-only": "^0.0.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "0.5.13",
-    "@electric-sql/pglite-socket": "^0.2.16",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^22.20.5",
-    "@types/pg": "8.23.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "drizzle-kit": "0.31.11",
