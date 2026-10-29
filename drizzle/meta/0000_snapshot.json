@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "82cc4575-2cd3-43a0-b408-20571686b232",
+  "id": "5e45a85d-4bc2-4311-85cb-d1601b4f2af9",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "activity": {
@@ -136,6 +136,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "requested_by": {
+          "name": "requested_by",
+          "type": "varchar(36)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "draft_id": {
           "name": "draft_id",
           "type": "varchar(36)",
@@ -169,6 +176,28 @@
           "type": "varchar(16)",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "locked_at": {
+          "name": "locked_at",
+          "type": "datetime(3)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "locked_by": {
+          "name": "locked_by",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "stop_reason": {
@@ -229,6 +258,21 @@
             "created_at"
           ],
           "isUnique": false
+        },
+        "ai_generations_queue_idx": {
+          "name": "ai_generations_queue_idx",
+          "columns": [
+            "status",
+            "created_at"
+          ],
+          "isUnique": false
+        },
+        "ai_generations_draft_idx": {
+          "name": "ai_generations_draft_idx",
+          "columns": [
+            "draft_id"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -243,6 +287,19 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ai_generations_requested_by_users_id_fk": {
+          "name": "ai_generations_requested_by_users_id_fk",
+          "tableFrom": "ai_generations",
+          "tableTo": "users",
+          "columnsFrom": [
+            "requested_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         },
         "ai_generations_draft_id_content_drafts_id_fk": {
@@ -271,7 +328,7 @@
       "checkConstraint": {
         "ai_generations_status_check": {
           "name": "ai_generations_status_check",
-          "value": "status in ('succeeded', 'failed', 'refused', 'invalid')"
+          "value": "status in ('queued', 'running', 'succeeded', 'failed', 'refused', 'invalid')"
         }
       }
     },
@@ -695,7 +752,7 @@
       "checkConstraint": {
         "content_drafts_status_check": {
           "name": "content_drafts_status_check",
-          "value": "status in ('draft', 'awaiting_approval', 'approved', 'rejected', 'scheduled', 'publishing', 'published', 'failed', 'archived')"
+          "value": "status in ('generating', 'generation_failed', 'draft', 'awaiting_approval', 'approved', 'rejected', 'scheduled', 'publishing', 'published', 'failed', 'archived')"
         },
         "content_drafts_kind_check": {
           "name": "content_drafts_kind_check",

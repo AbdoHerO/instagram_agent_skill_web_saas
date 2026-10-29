@@ -7,7 +7,7 @@ import { z } from 'zod';
 
 import type { ActionState } from '@/components/forms';
 import { isValidTimeZone, zonedToUtc } from '@/lib/time';
-import { generateDraft, GenerationError } from '@/server/ai/generate';
+import { GenerationError, queueGeneration, retryGeneration } from '@/server/ai/generate';
 import { generateDeps, mediaStorage, metaConfig } from '@/server/app';
 import { requireUser } from '@/server/auth/session';
 import { getBrand } from '@/server/brand';
@@ -52,7 +52,8 @@ export async function generateAction(_: ActionState, fd: FormData): Promise<Acti
   let draftId: string | null = null;
   const result = await attempt(async () => {
     const productIds = str(fd, 'productIds').split(/[\s,]+/).filter(Boolean).map(Number);
-    const { draft } = await generateDraft(generateDeps(), {
+    // Returns at once: the draft is created as "generating" and the worker writes it (no wait on Claude here).
+    const { draft } = await queueGeneration(generateDeps(), {
       ownerId: user.id, userId: user.id,
       request: {
         kind: str(fd, 'kind'), purpose: str(fd, 'purpose') || 'general', topic: str(fd, 'topic'), language: str(fd, 'language') || 'fr',
@@ -64,6 +65,17 @@ export async function generateAction(_: ActionState, fd: FormData): Promise<Acti
   });
   if (draftId) redirect(`/drafts/${draftId}`);
   return result;
+}
+
+/** "Try again" on a draft whose generation failed: the same request, queued again. */
+export async function retryGenerationAction(_: ActionState, fd: FormData): Promise<ActionState> {
+  const user = await requireUser();
+  return attempt(async () => {
+    const draftId = z.uuid().parse(str(fd, 'draftId'));
+    await retryGeneration(generateDeps(), { ownerId: user.id, userId: user.id, draftId });
+    revalidatePath(`/drafts/${draftId}`);
+    return { ok: true, message: 'Queued again: the draft is being written.' };
+  });
 }
 
 /** A draft written by hand (no AI): same approval and scheduling rules. */

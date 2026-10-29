@@ -62,7 +62,7 @@ Copy `.env.example` to `.env.local` (the setup script already created it) and fi
 
 ```powershell
 npm run dev        # http://localhost:3100
-npm run worker     # second terminal: the publishing worker (keep it running)
+npm run worker     # second terminal, unless WORKER_IN_PROCESS=true: writes AI drafts and publishes (keep it running)
 ```
 
 From another device on the LAN: `$env:DEV_ALLOWED_ORIGINS="192.168.1.7"; npx next dev -H 0.0.0.0 -p 3100`.

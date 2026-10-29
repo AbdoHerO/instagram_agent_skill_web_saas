@@ -42,7 +42,8 @@ const created = () => time('created_at').notNull().$defaultFn(() => new Date());
 const updated = () => time('updated_at').notNull().$defaultFn(() => new Date());
 const longText = (name: string) => text(name).notNull().$defaultFn(() => '');
 
-export const DRAFT_STATUSES = ['draft', 'awaiting_approval', 'approved', 'rejected', 'scheduled', 'publishing', 'published', 'failed', 'archived'] as const;
+/** `generating` / `generation_failed`: the draft exists while the worker asks Claude for its first version. */
+export const DRAFT_STATUSES = ['generating', 'generation_failed', 'draft', 'awaiting_approval', 'approved', 'rejected', 'scheduled', 'publishing', 'published', 'failed', 'archived'] as const;
 export const DRAFT_KINDS = ['feed_image', 'reel', 'carousel', 'story', 'plan', 'idea'] as const;
 export const JOB_STATUSES = ['queued', 'running', 'succeeded', 'failed', 'cancelled'] as const;
 export const ACCOUNT_STATUSES = ['connected', 'needs_reauth', 'error', 'disconnected'] as const;
@@ -236,14 +237,25 @@ export const publishLogs = mysqlTable('publish_logs', {
   createdAt: created(),
 }, (t) => [index('publish_logs_draft_idx').on(t.draftId), index('publish_logs_job_idx').on(t.jobId)]);
 
+/**
+ * One row per generation request, and the generation queue: a request is saved
+ * `queued` (the web request returns at once), the worker claims it (`running`,
+ * locked_by/locked_at, one atomic UPDATE as for publishing jobs) and records the
+ * outcome. The full request is kept only until then (source material is then
+ * reduced to its length).
+ */
 export const aiGenerations = mysqlTable('ai_generations', {
   id: id(),
   ownerId: ref('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  requestedBy: ref('requested_by').references(() => users.id, { onDelete: 'set null' }),
   draftId: ref('draft_id').references(() => contentDrafts.id, { onDelete: 'set null' }),
   request: jsonText<unknown>('request').notNull(),
   model: varchar('model', { length: 100 }).notNull(),
   skills: jsonText<string[]>('skills').notNull().$defaultFn(() => []),
   status: varchar('status', { length: 16 }).notNull(),
+  attempts: int('attempts').notNull().default(0),
+  lockedAt: time('locked_at'),
+  lockedBy: varchar('locked_by', { length: 200 }),
   stopReason: varchar('stop_reason', { length: 32 }),
   inputTokens: int('input_tokens'),
   outputTokens: int('output_tokens'),
@@ -253,7 +265,9 @@ export const aiGenerations = mysqlTable('ai_generations', {
   createdAt: created(),
 }, (t) => [
   index('ai_generations_owner_created_idx').on(t.ownerId, t.createdAt),
-  check('ai_generations_status_check', inList('status', ['succeeded', 'failed', 'refused', 'invalid'])),
+  index('ai_generations_queue_idx').on(t.status, t.createdAt),
+  index('ai_generations_draft_idx').on(t.draftId),
+  check('ai_generations_status_check', inList('status', ['queued', 'running', 'succeeded', 'failed', 'refused', 'invalid'])),
 ]);
 
 export const activity = mysqlTable('activity', {

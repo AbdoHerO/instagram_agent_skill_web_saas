@@ -16,8 +16,8 @@ const isLocal = !publicUrl || ['localhost', '127.0.0.1'].includes(publicUrl.host
 const LOCAL_ORIGIN = 'localhost:3100'; // the port of `npm run dev` / `npm run start`
 
 const nextConfig: NextConfig = {
-  // Server-only packages (native argon2, pg, the S3 SDK) stay out of the client bundle.
-  serverExternalPackages: ['@node-rs/argon2', 'pg'],
+  // Server-only packages (native argon2, the MySQL driver) are loaded from node_modules, not bundled.
+  serverExternalPackages: ['@node-rs/argon2', 'mysql2'],
   poweredByHeader: false,
   // Development from another machine on the LAN (e.g. DEV_ALLOWED_ORIGINS=192.168.1.7), or through APP_URL.
   allowedDevOrigins: [
@@ -25,7 +25,12 @@ const nextConfig: NextConfig = {
     ...(isLocal ? [] : [publicUrl!.hostname]),
   ],
   experimental: {
-    serverActions: { allowedOrigins: isLocal ? [] : [publicUrl!.host, LOCAL_ORIGIN] },
+    serverActions: {
+      allowedOrigins: isLocal ? [] : [publicUrl!.host, LOCAL_ORIGIN],
+      // Media uploads go through a Server Action (default limit 1 MB). 60 MB for a Reel; Nginx on CloudOps
+      // accepts 64 MB, and MEDIA_MAX_BYTES (60 MiB) gives the clear error before that.
+      bodySizeLimit: '60mb',
+    },
   },
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];

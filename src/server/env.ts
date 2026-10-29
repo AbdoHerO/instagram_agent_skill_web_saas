@@ -51,7 +51,8 @@ const schema = z.object({
   MEDIA_LOCAL_DIR: z.string().default('storage/media'),
   /** Public base URL Meta can reach to download media (https in production). */
   MEDIA_PUBLIC_BASE_URL: z.url().optional(),
-  MEDIA_MAX_BYTES: z.coerce.number().int().default(100 * 1024 * 1024),
+  /** Largest upload (60 MiB: Server Actions accept 60 MB, see next.config.ts; Nginx on CloudOps 64 MB). */
+  MEDIA_MAX_BYTES: z.coerce.number().int().default(60 * 1024 * 1024),
   S3_BUCKET: z.string().optional(),
   S3_REGION: z.string().optional(),
   S3_ENDPOINT: z.url().optional(),
@@ -59,6 +60,8 @@ const schema = z.object({
   S3_SECRET_ACCESS_KEY: z.string().optional(),
 
   WORKER_POLL_SECONDS: z.coerce.number().int().min(1).max(300).default(15),
+  /** true: the worker runs inside the web server (src/instrumentation.ts); otherwise run `npm run worker`. */
+  WORKER_IN_PROCESS: z.enum(['true', 'false']).default('false'),
 });
 
 export type Env = z.infer<typeof schema>;

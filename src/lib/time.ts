@@ -59,3 +59,8 @@ export function inputValuesInZone(instant: Date, tz: string): { date: string; ti
 export function hoursFromNow(hours: number): Date {
   return new Date(Date.now() + hours * 3_600_000);
 }
+
+/** Whole seconds since `instant` (for "started 40 s ago"). */
+export function secondsSince(instant: Date): number {
+  return Math.max(0, Math.round((Date.now() - instant.getTime()) / 1000));
+}

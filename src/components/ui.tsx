@@ -48,6 +48,8 @@ export function ButtonLink({ variant = 'primary', className, ...props }: Compone
 }
 
 const STATUS_STYLES: Record<string, string> = {
+  generating: 'bg-sky-50 text-sky-800',
+  generation_failed: 'bg-red-100 text-red-800',
   draft: 'bg-slate-100 text-slate-700',
   awaiting_approval: 'bg-amber-50 text-amber-800',
   approved: 'bg-blue-50 text-blue-800',

@@ -34,6 +34,12 @@ draft ──submit──> awaiting_approval ──approve──> approved ──
 
 ## AI service (`src/server/ai/generate.ts`)
 
+Generation runs in the background, so no web request waits for Claude (Nginx closes a request that sends nothing
+for 60 s): the Studio queues the request (`ai_generations`, status `queued`) and creates the draft as `generating`,
+then returns; the worker claims the request (one atomic UPDATE), runs the steps below and turns the draft into an
+ordinary `draft` with version 1, or `generation_failed` with the reason (Try again / Archive). The draft page
+refreshes itself until then. A worker that stops (deployment) hands the request back to the queue.
+
 1. Validate the request (Zod). 2. Enforce the per-user daily limit. 3. Load the business context
 (`docs/business-context.md`), the voice profile (Settings, default `.claude/instagram/voice.md`) and the relevant
 `SKILL.md` instructions with an adaptation note (no files, no tools, no posting inside the app). 4. Fetch product facts

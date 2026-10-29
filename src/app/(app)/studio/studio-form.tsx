@@ -95,7 +95,7 @@ export function StudioForm({ defaultLanguage, catalogEnabled }: { defaultLanguag
               </ul>
             </div>
           ) : null}
-          <SubmitButton pendingLabel="Writing the draft… (up to a minute)">Generate draft</SubmitButton>
+          <SubmitButton pendingLabel="Queuing…">Generate draft</SubmitButton>
           <p className="text-xs text-muted">The result opens as a draft. Missing facts come back as {'{{to confirm}}'} and block approval until you fix them.</p>
         </ActionForm>
       </Card>

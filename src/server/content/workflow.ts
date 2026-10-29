@@ -4,6 +4,9 @@ export type DraftStatus = (typeof DRAFT_STATUSES)[number];
 export type DraftKind = (typeof DRAFT_KINDS)[number];
 
 export type WorkflowAction =
+  | 'generated'
+  | 'generation_failed'
+  | 'retry_generation'
   | 'edit'
   | 'submit'
   | 'approve'
@@ -29,6 +32,10 @@ export class WorkflowError extends Error {
  * published / failed.
  */
 const TRANSITIONS: Record<WorkflowAction, { from: readonly DraftStatus[]; to: DraftStatus }> = {
+  // The worker writes the first version of an AI draft in the background.
+  generated: { from: ['generating'], to: 'draft' },
+  generation_failed: { from: ['generating'], to: 'generation_failed' },
+  retry_generation: { from: ['generation_failed'], to: 'generating' },
   edit: { from: ['draft', 'awaiting_approval', 'approved', 'rejected', 'scheduled', 'failed'], to: 'draft' },
   submit: { from: ['draft', 'rejected', 'failed'], to: 'awaiting_approval' },
   approve: { from: ['draft', 'awaiting_approval'], to: 'approved' },
@@ -39,7 +46,7 @@ const TRANSITIONS: Record<WorkflowAction, { from: readonly DraftStatus[]; to: Dr
   retry_later: { from: ['publishing'], to: 'scheduled' },
   publish_succeeded: { from: ['publishing'], to: 'published' },
   publish_failed: { from: ['publishing', 'scheduled'], to: 'failed' },
-  archive: { from: ['draft', 'awaiting_approval', 'approved', 'rejected', 'failed', 'published'], to: 'archived' },
+  archive: { from: ['generating', 'generation_failed', 'draft', 'awaiting_approval', 'approved', 'rejected', 'failed', 'published'], to: 'archived' },
 };
 
 export function nextStatus(current: DraftStatus, action: WorkflowAction): DraftStatus {

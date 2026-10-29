@@ -14,11 +14,15 @@ CREATE TABLE `activity` (
 CREATE TABLE `ai_generations` (
 	`id` varchar(36) NOT NULL,
 	`owner_id` varchar(36) NOT NULL,
+	`requested_by` varchar(36),
 	`draft_id` varchar(36),
 	`request` longtext NOT NULL,
 	`model` varchar(100) NOT NULL,
 	`skills` longtext NOT NULL,
 	`status` varchar(16) NOT NULL,
+	`attempts` int NOT NULL DEFAULT 0,
+	`locked_at` datetime(3),
+	`locked_by` varchar(200),
 	`stop_reason` varchar(32),
 	`input_tokens` int,
 	`output_tokens` int,
@@ -27,7 +31,7 @@ CREATE TABLE `ai_generations` (
 	`error` text,
 	`created_at` datetime(3) NOT NULL,
 	CONSTRAINT `ai_generations_id` PRIMARY KEY(`id`),
-	CONSTRAINT `ai_generations_status_check` CHECK(status in ('succeeded', 'failed', 'refused', 'invalid'))
+	CONSTRAINT `ai_generations_status_check` CHECK(status in ('queued', 'running', 'succeeded', 'failed', 'refused', 'invalid'))
 );
 --> statement-breakpoint
 CREATE TABLE `approvals` (
@@ -77,7 +81,7 @@ CREATE TABLE `content_drafts` (
 	`created_at` datetime(3) NOT NULL,
 	`updated_at` datetime(3) NOT NULL,
 	CONSTRAINT `content_drafts_id` PRIMARY KEY(`id`),
-	CONSTRAINT `content_drafts_status_check` CHECK(status in ('draft', 'awaiting_approval', 'approved', 'rejected', 'scheduled', 'publishing', 'published', 'failed', 'archived')),
+	CONSTRAINT `content_drafts_status_check` CHECK(status in ('generating', 'generation_failed', 'draft', 'awaiting_approval', 'approved', 'rejected', 'scheduled', 'publishing', 'published', 'failed', 'archived')),
 	CONSTRAINT `content_drafts_kind_check` CHECK(kind in ('feed_image', 'reel', 'carousel', 'story', 'plan', 'idea'))
 );
 --> statement-breakpoint
@@ -211,6 +215,7 @@ CREATE TABLE `users` (
 ALTER TABLE `activity` ADD CONSTRAINT `activity_owner_id_users_id_fk` FOREIGN KEY (`owner_id`) REFERENCES `users`(`id`) ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE `activity` ADD CONSTRAINT `activity_draft_id_content_drafts_id_fk` FOREIGN KEY (`draft_id`) REFERENCES `content_drafts`(`id`) ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE `ai_generations` ADD CONSTRAINT `ai_generations_owner_id_users_id_fk` FOREIGN KEY (`owner_id`) REFERENCES `users`(`id`) ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE `ai_generations` ADD CONSTRAINT `ai_generations_requested_by_users_id_fk` FOREIGN KEY (`requested_by`) REFERENCES `users`(`id`) ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE `ai_generations` ADD CONSTRAINT `ai_generations_draft_id_content_drafts_id_fk` FOREIGN KEY (`draft_id`) REFERENCES `content_drafts`(`id`) ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE `approvals` ADD CONSTRAINT `approvals_draft_id_content_drafts_id_fk` FOREIGN KEY (`draft_id`) REFERENCES `content_drafts`(`id`) ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE `approvals` ADD CONSTRAINT `approvals_version_id_content_versions_id_fk` FOREIGN KEY (`version_id`) REFERENCES `content_versions`(`id`) ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -233,6 +238,8 @@ ALTER TABLE `publishing_jobs` ADD CONSTRAINT `publishing_jobs_instagram_account_
 ALTER TABLE `sessions` ADD CONSTRAINT `sessions_user_id_users_id_fk` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX `activity_owner_created_idx` ON `activity` (`owner_id`,`created_at`);--> statement-breakpoint
 CREATE INDEX `ai_generations_owner_created_idx` ON `ai_generations` (`owner_id`,`created_at`);--> statement-breakpoint
+CREATE INDEX `ai_generations_queue_idx` ON `ai_generations` (`status`,`created_at`);--> statement-breakpoint
+CREATE INDEX `ai_generations_draft_idx` ON `ai_generations` (`draft_id`);--> statement-breakpoint
 CREATE INDEX `approvals_draft_idx` ON `approvals` (`draft_id`);--> statement-breakpoint
 CREATE INDEX `content_drafts_owner_status_idx` ON `content_drafts` (`owner_id`,`status`);--> statement-breakpoint
 CREATE INDEX `content_drafts_scheduled_idx` ON `content_drafts` (`scheduled_at`);--> statement-breakpoint

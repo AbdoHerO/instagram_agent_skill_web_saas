@@ -5,18 +5,21 @@ import { Card, Field, inputClass, Notice, PageHeader, StatusBadge } from '@/comp
 import { DEFAULT_TIMEZONE, formatInZone, hoursFromNow, inputValuesInZone } from '@/lib/time';
 import { mediaStorage } from '@/server/app';
 import { requireUser } from '@/server/auth/session';
+import { latestGeneration } from '@/server/ai/generate';
 import { getBrand } from '@/server/brand';
 import { getDraftDetail, NotFoundError } from '@/server/content/service';
 import { contentPayloadSchema, type VersionValidation } from '@/server/content/types';
 import { canDo, PUBLISHABLE_KINDS, type DraftKind, type DraftStatus } from '@/server/content/workflow';
 import { getDb } from '@/server/db';
 import { mediaAssets } from '@/server/db/schema';
+import { env } from '@/server/env';
 import { listAccounts } from '@/server/meta/accounts';
 import { eq } from 'drizzle-orm';
 
 import {
   approveAction, archiveAction, cancelScheduleAction, rejectAction, rescheduleAction, saveVersionAction, scheduleAction, submitAction, uploadMediaAction,
 } from '../../actions';
+import { GeneratingDraft } from './generating';
 import { SkillChecks } from './skill-checks';
 
 export const metadata = { title: 'Draft' };
@@ -32,7 +35,18 @@ export default async function DraftPage({ params }: { params: Promise<{ id: stri
   });
   const [accounts, brand] = await Promise.all([listAccounts(db, user.id), getBrand(db, user.id)]);
   const { draft, current, versions, approvals, jobs, logs } = detail;
-  if (!current) notFound();
+  if (draft.status === 'generating' || draft.status === 'generation_failed') {
+    return <GeneratingDraft draft={draft} generation={await latestGeneration(db, user.id, draft.id)} timezone={draft.timezone || brand.timezone || DEFAULT_TIMEZONE} />;
+  }
+  if (!current) {
+    // An AI draft archived before its text was written: there is no version to show.
+    return (
+      <>
+        <PageHeader title={draft.title} description={<span className="flex flex-wrap items-center gap-2"><StatusBadge status={draft.status} /> {draft.kind.replace('_', ' ')}</span>} />
+        <Card><p className="text-sm text-muted">This draft was archived before its text was written. Nothing was saved as content.</p></Card>
+      </>
+    );
+  }
   const payload = contentPayloadSchema.parse(current.payload);
   const validation = current.validation as VersionValidation;
   const blocking = (validation.issues ?? []).filter((i) => i.blocking);
@@ -49,6 +63,8 @@ export default async function DraftPage({ params }: { params: Promise<{ id: stri
   const scheduleDefaults = inputValuesInZone(draft.scheduledAt ?? hoursFromNow(24), tz);
   const connected = accounts.filter((a) => a.status === 'connected');
   const publishable = PUBLISHABLE_KINDS.includes(draft.kind as DraftKind);
+  // Also capped by Next.js's Server Action body limit (60 MB, next.config.ts), less a margin for the form's other fields.
+  const maxUploadBytes = Math.min(env().MEDIA_MAX_BYTES, 60 * 1024 * 1024 - 64 * 1024);
   // Sections the format uses (others stay as hidden values so nothing is lost on save).
   const kind = draft.kind as DraftKind;
   const show = {
@@ -174,10 +190,10 @@ export default async function DraftPage({ params }: { params: Promise<{ id: stri
           {publishable ? (
             <Card title="Media">
               {canDo(status, 'edit') ? (
-                <ActionForm action={uploadMediaAction} className="space-y-2">
+                <ActionForm action={uploadMediaAction} className="space-y-2" maxFileBytes={maxUploadBytes}>
                   <input type="hidden" name="draftId" value={draft.id} />
                   <input type="file" name="file" accept={draft.kind === 'reel' ? 'video/mp4' : 'image/jpeg'} className="block w-full text-sm" />
-                  <p className="text-xs text-muted">{draft.kind === 'reel' ? 'MP4 video' : 'JPEG image'} · attaching creates a new version (re-approval needed).</p>
+                  <p className="text-xs text-muted">{draft.kind === 'reel' ? 'MP4 video' : 'JPEG image'}, up to {Math.floor(maxUploadBytes / 1024 / 1024)} MB · attaching creates a new version (re-approval needed).</p>
                   <SubmitButton variant="secondary" pendingLabel="Uploading…">Upload and attach</SubmitButton>
                 </ActionForm>
               ) : <p className="text-sm text-muted">{media ? media.originalName ?? 'Attached' : 'No media'}</p>}

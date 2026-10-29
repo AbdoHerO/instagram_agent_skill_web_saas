@@ -76,6 +76,43 @@ export async function createDraft(db: Db, input: {
   });
 }
 
+/** An AI draft is created at once, without a version, while the worker writes it (status `generating`). */
+export async function createGeneratingDraft(db: Db, input: { ownerId: string; kind: DraftKind; title: string; timezone?: string }) {
+  return insertRow(db, contentDrafts, {
+    ownerId: input.ownerId, kind: input.kind, title: input.title.slice(0, 200), status: 'generating', timezone: input.timezone ?? 'Africa/Casablanca',
+  });
+}
+
+/** The worker's result: version 1 of a `generating` draft, which becomes an ordinary draft. */
+export async function completeGeneratedDraft(db: Db, input: {
+  ownerId: string; userId: string; draftId: string; title: string; payload: ContentPayload; tools?: Record<string, unknown>;
+}) {
+  const draft = await ownedDraft(db, input.ownerId, input.draftId);
+  const status = nextStatus(draft.status as DraftStatus, 'generated');
+  return db.transaction(async (tx) => {
+    const t = tx as unknown as Db;
+    const version = await insertVersion(t, { draftId: draft.id, version: 1, kind: draft.kind as DraftKind, payload: input.payload, mediaAssetId: null, userId: input.userId, tools: input.tools });
+    const row = await updateRow(t, contentDrafts, draft.id, { currentVersionId: version.id, title: input.title.slice(0, 200), status, lastError: null, updatedAt: new Date() });
+    await logActivity(t, { ownerId: input.ownerId, draftId: draft.id, type: 'draft_created', message: `Draft created: ${row.title}` });
+    return { draft: row, version };
+  });
+}
+
+/** Generation failed: the draft keeps the message and can be retried or archived. */
+export async function failGeneratedDraft(db: Db, ownerId: string, draftId: string, message: string) {
+  const draft = await ownedDraft(db, ownerId, draftId);
+  if (draft.status !== 'generating') return draft;
+  const row = await updateRow(db, contentDrafts, draft.id, { status: nextStatus('generating', 'generation_failed'), lastError: message.slice(0, 500), updatedAt: new Date() });
+  await logActivity(db, { ownerId, draftId, type: 'generation_failed', level: 'error', message: `The draft "${draft.title}" could not be written: ${message}` });
+  return row;
+}
+
+/** Back to `generating` (the caller queues a new generation for it). */
+export async function markDraftGenerating(db: Db, ownerId: string, draftId: string) {
+  const draft = await ownedDraft(db, ownerId, draftId);
+  return updateRow(db, contentDrafts, draft.id, { status: nextStatus(draft.status as DraftStatus, 'retry_generation'), lastError: null, updatedAt: new Date() });
+}
+
 /**
  * An edit is a new immutable version. If the post was approved or scheduled,
  * the approval is invalidated and any queued publishing job is cancelled: the
