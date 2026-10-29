@@ -63,6 +63,8 @@ describe('skill tools (real Python scripts)', () => {
     expect(checks.humanized?.text).not.toContain('—'); // em dash removed
     expect(checks.humanized?.text.toLowerCase()).not.toContain('delve into');
     expect((checks.caption as { hashtags: string[] }).hashtags).toEqual(['#thinkpad', '#maroc']);
+    // The draft page shows these two fields (skill-checks.tsx).
+    expect(checks.detect).toMatchObject({ human_score: expect.any(Number), verdict: expect.any(String) });
     const hooks = checks.hooks as { score: number }[];
     expect(hooks[0]!.score).toBeGreaterThan(hooks[1]!.score);
     expect((checks.beats as { beats: unknown[] }).beats).toHaveLength(2);

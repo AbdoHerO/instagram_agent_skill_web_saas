@@ -18,7 +18,7 @@ if (!config.ANTHROPIC_API_KEY) {
 
 const MAX_TOKENS = 512;
 console.log(`Model: ${config.CLAUDE_MODEL} | effort: low | max output: ${MAX_TOKENS} tokens | retries: none`);
-console.log(`Workspace header: ${config.ANTHROPIC_WORKSPACE_ID ?? 'none (the key must be scoped to a workspace)'}`);
+console.log(`Workspace header: ${config.ANTHROPIC_WORKSPACE_ID ? 'set' : 'none (the key must be scoped to a workspace)'}`);
 console.log(`Publishing mode: ${config.PUBLISHING_MODE} (not used by this check)`);
 
 const client = claudeClient(config, { maxRetries: 0, timeout: 60_000 })!;

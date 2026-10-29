@@ -24,7 +24,10 @@ export async function GET(request: NextRequest) {
   if (!user) return NextResponse.redirect(new URL('/login', appUrl));
 
   const params = request.nextUrl.searchParams;
-  if (params.get('error')) return back('error=denied');
+  if (params.get('error')) {
+    console.warn('[oauth] connection not completed: denied');
+    return back('error=denied');
+  }
   const db = getDb();
   try {
     await consumeOAuthState(db, user.id, params.get('state'));
@@ -33,9 +36,14 @@ export async function GET(request: NextRequest) {
     if (!isValidEncryptionKey(env().TOKEN_ENCRYPTION_KEY)) throw new OAuthError('TOKEN_ENCRYPTION_KEY is missing or invalid', 'encryption_key');
     const { accessToken } = await exchangeCode(metaConfig(), code);
     const accounts = await connectAccounts(db, metaConfig(), { ownerId: user.id, token: accessToken, encryptionKey: env().TOKEN_ENCRYPTION_KEY });
+    console.log(`[oauth] connected ${accounts.length} Instagram account(s)`);
     return back(`connected=${accounts.length}`);
   } catch (error) {
-    if (error instanceof OAuthError || error instanceof ConnectionProblem) return back(`error=${error.code}`);
+    if (error instanceof OAuthError || error instanceof ConnectionProblem) {
+      // The code only (e.g. invalid_state, exchange_failed, unsupported_token): never the authorization code or a token.
+      console.warn(`[oauth] connection not completed: ${error.code}`);
+      return back(`error=${error.code}`);
+    }
     console.error('[oauth] connection failed:', error instanceof MetaApiError ? `Meta error ${error.code ?? error.status}` : error instanceof Error ? error.name : 'error');
     return back('error=failed');
   }

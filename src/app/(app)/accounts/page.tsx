@@ -1,5 +1,5 @@
 import { ActionForm, SubmitButton } from '@/components/forms';
-import { ButtonLink, Card, EmptyState, Notice, PageHeader, StatusBadge } from '@/components/ui';
+import { buttonClass, Card, EmptyState, Notice, PageHeader, StatusBadge } from '@/components/ui';
 import { formatInZone } from '@/lib/time';
 import { metaConfig } from '@/server/app';
 import { requireUser } from '@/server/auth/session';
@@ -42,7 +42,8 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
       <PageHeader
         title="Instagram Accounts"
         description="Instagram API with Unified Login: you sign in with Facebook or Instagram in Meta's own dialog, choose your business portfolio's Instagram professional account, and the app receives a business integration (system-user) token. Your password never reaches this app."
-        action={canConnect ? <ButtonLink href="/api/meta/oauth/start">Connect an account</ButtonLink> : null}
+        // A plain link, not next/link: the route redirects to Meta, so it must be neither prefetched nor fetched client-side.
+        action={canConnect ? <a href="/api/meta/oauth/start" className={buttonClass('primary')}>Connect an account</a> : null}
       />
       <div className="mb-4 space-y-2">
         {query.connected ? <Notice tone="success">{query.connected} account(s) connected.</Notice> : null}
@@ -82,7 +83,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
                 {account.lastError ? <p className="mt-2 text-sm text-danger">{account.lastError}</p> : null}
                 <div className="mt-4 flex flex-wrap gap-2">
                   {account.tokenCiphertext ? <ActionForm action={checkAccountAction}><input type="hidden" name="accountId" value={account.id} /><SubmitButton variant="secondary" pendingLabel="Checking…">Check connection</SubmitButton></ActionForm> : null}
-                  {status !== 'connected' && canConnect ? <ButtonLink href="/api/meta/oauth/start" variant="secondary">Reconnect</ButtonLink> : null}
+                  {status !== 'connected' && canConnect ? <a href="/api/meta/oauth/start" className={buttonClass('secondary')}>Reconnect</a> : null}
                   {account.tokenCiphertext ? <ActionForm action={disconnectAction} confirm="Delete the stored access for this account?"><input type="hidden" name="accountId" value={account.id} /><SubmitButton variant="danger">Disconnect</SubmitButton></ActionForm> : null}
                 </div>
               </Card>

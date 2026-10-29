@@ -16,7 +16,7 @@ import { fakeMeta, validToken } from './helpers/fake-meta';
 import { createUser } from './helpers/fixtures';
 
 /**
- * The OAuth routes end to end: signed-in user, real migrations (PGlite), and a
+ * The OAuth routes end to end: signed-in user, real migrations (MySQL), and a
  * scripted graph.facebook.com. Nothing is sent to Meta.
  */
 const current = vi.hoisted(() => ({ user: null as { id: string } | null, db: null as unknown, meta: null as unknown }));
@@ -57,12 +57,16 @@ const connected = () => ({
 const location = (response: Response) => response.headers.get('location') ?? '';
 const callbackRequest = (query: string) => new NextRequest(`https://app.test/api/meta/oauth/callback?${query}`);
 const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+const info = vi.spyOn(console, 'log').mockImplementation(() => {});
 
 beforeEach(async () => {
   setEnv({});
   current.user = await createUser(db);
   current.meta = fakeMeta({}).config;
   logged.mockClear();
+  warned.mockClear();
+  info.mockClear();
 });
 afterEach(() => {
   for (const [key, value] of Object.entries(saved)) {
@@ -121,6 +125,7 @@ describe('GET /api/meta/oauth/callback', () => {
     expect(decryptSecret(account!.tokenCiphertext!, KEY)).toBe(TOKEN);
     expect(location(response)).not.toContain(TOKEN);
     expect(logged).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith('[oauth] connected 1 Instagram account(s)');
 
     // The same state cannot be replayed.
     const replay = await callback(callbackRequest(`code=${CODE}&state=${state}`));
@@ -174,7 +179,10 @@ describe('GET /api/meta/oauth/callback', () => {
     expect(down.url).toBe('https://app.test/accounts?error=failed');
     expect(logged).toHaveBeenCalledTimes(1);
 
-    const output = logged.mock.calls.flat().join(' ');
+    // Handled failures leave their code in the server log, so a failed connection can be diagnosed.
+    expect(warned.mock.calls.flat()).toEqual(['encryption_key', 'exchange_failed', 'unsupported_token', 'no_account', 'invalid_token']
+      .map((code) => `[oauth] connection not completed: ${code}`));
+    const output = [...logged.mock.calls, ...warned.mock.calls, ...info.mock.calls].flat().join(' ');
     for (const secret of [TOKEN, CODE, 'test-app-secret', KEY]) expect(output).not.toContain(secret);
   });
 });

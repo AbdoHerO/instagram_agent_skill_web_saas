@@ -5,7 +5,9 @@ type Check = { check: string; status: string; detail: string };
 /** Results of the installed skills' own tools on this version (advisory; the reviewer decides). */
 export function SkillChecks({ tools }: { tools: Record<string, unknown> | null }) {
   if (!tools) return null;
-  const detect = tools.detect as { score?: number; verdict?: string } | { score?: number; verdict?: string }[] | null | undefined;
+  // detect.py --json reports { human_score, verdict, checks } (one object, or a list for several inputs).
+  type Detect = { human_score?: number; verdict?: string };
+  const detect = tools.detect as Detect | Detect[] | null | undefined;
   const human = Array.isArray(detect) ? detect.at(-1) : detect;
   const caption = tools.caption as { checks?: Check[]; verdict?: string } | null | undefined;
   const hooks = tools.hooks as { hook: string; score: number; verdict: string; flags?: string[] }[] | null | undefined;
@@ -15,7 +17,7 @@ export function SkillChecks({ tools }: { tools: Record<string, unknown> | null }
   return (
     <Card title="Skill checks">
       <div className="space-y-4 text-sm">
-        {human ? <p><strong>ig-human detect.py:</strong> human score {human.score ?? '—'} ({human.verdict ?? '—'})</p> : null}
+        {human ? <p><strong>ig-human detect.py:</strong> human score {human.human_score ?? '—'} / 100 ({human.verdict ?? '—'})</p> : null}
         {caption?.checks?.length ? (
           <div>
             <p className="font-medium">ig-caption caption.py {caption.verdict ? `· ${caption.verdict}` : ''}</p>

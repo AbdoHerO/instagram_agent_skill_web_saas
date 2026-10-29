@@ -63,10 +63,20 @@ Path: **App Dashboard → Use cases → Manage messaging & content on Instagram 
 
 ### Local HTTPS
 
-Meta requires an HTTPS Redirect URL. Locally: `npm run dev:https` (Next.js creates a local certificate; the first time,
-Windows asks you to trust a local development certificate authority), then set `APP_URL=https://localhost:3100` and
-`META_REDIRECT_URI=https://localhost:3100/api/meta/oauth/callback`. Whether the dashboard accepts a `localhost` Redirect
-URL is *(not documented)*; if it refuses, use an HTTPS tunnel or the production domain.
+Meta requires an HTTPS Redirect URL. Whether it accepts `https://localhost` is *(not documented)*, so the reliable local
+setup is an HTTPS tunnel to port 3100:
+
+1. Run the app on port 3100 (`npm run build` then `npm run start`; the production server is safer behind a tunnel than
+   `npm run dev`).
+2. VS Code → **PORTS** panel → **Forward a Port** → `3100` (signs in with GitHub or Microsoft). *Private* visibility is
+   enough to connect an account (Meta only redirects your own browser); *Public* is needed later for publishing, because
+   Meta's servers download the media.
+3. Set `APP_URL=<forwarded address>` and `META_REDIRECT_URI=<forwarded address>/api/meta/oauth/callback` in `.env.local`,
+   rebuild and restart, and save the same Redirect URL in the Unified login configuration. A new tunnel address means
+   updating all three.
+
+Without a tunnel: `npm run dev:https` (Next.js creates and trusts a local certificate) with
+`APP_URL=https://localhost:3100`.
 
 ## What the app does
 
