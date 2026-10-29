@@ -16,6 +16,8 @@ const schema = z.object({
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(24 * 7),
 
   ANTHROPIC_API_KEY: z.string().optional(),
+  /** Only for a key that is not scoped to a workspace: sent as the anthropic-workspace-id header. Not a secret. */
+  ANTHROPIC_WORKSPACE_ID: z.string().regex(/^wrkspc_[A-Za-z0-9]+$/).optional(),
   CLAUDE_MODEL: z.string().default('claude-opus-5-5'),
   CLAUDE_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
   AI_DAILY_GENERATION_LIMIT: z.coerce.number().int().min(1).max(10_000).default(50),
@@ -56,7 +58,8 @@ let cached: Env | null = null;
 
 export function env(): Env {
   if (!cached) {
-    const parsed = schema.safeParse(process.env);
+    // An empty line such as `ECOMMERCE_API_URL=` means "not set", not an invalid value.
+    const parsed = schema.safeParse(Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== '')));
     if (!parsed.success) {
       // Names only: never print values.
       throw new Error(`Invalid configuration: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`);

@@ -2,9 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 import { metaConfig } from '@/server/app';
 import { currentUser } from '@/server/auth/session';
+import { isValidEncryptionKey } from '@/server/crypto';
 import { getDb } from '@/server/db';
 import { env } from '@/server/env';
-import { connectAccounts } from '@/server/meta/accounts';
+import { connectAccounts, ConnectionProblem } from '@/server/meta/accounts';
 import { MetaApiError } from '@/server/meta/graph';
 import { consumeOAuthState, exchangeCode, OAuthError } from '@/server/meta/oauth';
 
@@ -29,12 +30,12 @@ export async function GET(request: NextRequest) {
     await consumeOAuthState(db, user.id, params.get('state'));
     const code = params.get('code');
     if (!code || code.length > 2000) throw new OAuthError('Missing authorization code', 'exchange_failed');
+    if (!isValidEncryptionKey(env().TOKEN_ENCRYPTION_KEY)) throw new OAuthError('TOKEN_ENCRYPTION_KEY is missing or invalid', 'encryption_key');
     const { accessToken } = await exchangeCode(metaConfig(), code);
     const accounts = await connectAccounts(db, metaConfig(), { ownerId: user.id, token: accessToken, encryptionKey: env().TOKEN_ENCRYPTION_KEY });
     return back(`connected=${accounts.length}`);
   } catch (error) {
-    if (error instanceof OAuthError) return back(`error=${error.code}`);
-    if (error instanceof MetaApiError && /No Instagram professional account/.test(error.message)) return back('error=no_account');
+    if (error instanceof OAuthError || error instanceof ConnectionProblem) return back(`error=${error.code}`);
     console.error('[oauth] connection failed:', error instanceof MetaApiError ? `Meta error ${error.code ?? error.status}` : error instanceof Error ? error.name : 'error');
     return back('error=failed');
   }

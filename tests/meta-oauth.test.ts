@@ -4,9 +4,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { decryptSecret } from '@/server/crypto';
 import type { Db } from '@/server/db';
 import { instagramAccounts, oauthStates } from '@/server/db/schema';
-import { checkAccount, connectAccounts, disconnectAccount } from '@/server/meta/accounts';
+import { checkAccount, connectAccounts, disconnectAccount, effectiveStatus } from '@/server/meta/accounts';
 import { graphRequest, MetaApiError, redact } from '@/server/meta/graph';
-import { authorizeUrl, consumeOAuthState, createOAuthState, exchangeCode, OAuthError } from '@/server/meta/oauth';
+import { authorizeUrl, consumeOAuthState, createOAuthState, exchangeCode, expectedRedirectUri, OAuthError, redirectUriProblems } from '@/server/meta/oauth';
 
 import { createTestDb } from './helpers/db';
 import { fakeMeta, validToken } from './helpers/fake-meta';
@@ -63,6 +63,18 @@ describe('Unified Login authorization', () => {
     expect(error.message).not.toContain('xyz');
     expect(redact(`access_token=${TOKEN}&x=1 ${TOKEN}`)).not.toContain(TOKEN);
   });
+
+  it('derives the redirect URI from APP_URL and flags one that would break the login', () => {
+    expect(expectedRedirectUri('http://localhost:3100')).toBe('http://localhost:3100/api/meta/oauth/callback');
+    expect(redirectUriProblems('https://studio.example', 'https://studio.example/api/meta/oauth/callback')).toEqual({ errors: [], warnings: [] });
+    const local = redirectUriProblems('http://localhost:3100', 'http://localhost:3100/api/meta/oauth/callback');
+    expect(local.errors).toEqual([]);
+    expect(local.warnings.join(' ')).toMatch(/HTTPS/);
+    expect(redirectUriProblems('https://studio.example', 'https://studio.example/oauth/done').errors.join(' ')).toMatch(/\/api\/meta\/oauth\/callback/);
+    expect(redirectUriProblems('https://studio.example', 'https://other.example/api/meta/oauth/callback').errors.join(' ')).toMatch(/same address as APP_URL/);
+    expect(redirectUriProblems('https://localhost:3100', 'http://localhost:3100/api/meta/oauth/callback').errors).toHaveLength(1);
+    expect(redirectUriProblems('https://studio.example', undefined)).toEqual({ errors: [], warnings: [] });
+  });
 });
 
 describe('connected accounts', () => {
@@ -83,7 +95,49 @@ describe('connected accounts', () => {
     for (const call of meta.calls.filter((c) => c.params.has('access_token') && c.path !== 'debug_token')) expect(call.params.get('appsecret_proof')).toMatch(/^[0-9a-f]{64}$/);
 
     const none = fakeMeta({ 'GET debug_token': validToken(), 'GET me': () => ({ body: {} }), 'GET me/assigned_instagram_accounts': () => ({ body: { data: [] } }) });
-    await expect(connectAccounts(db, none.config, { ownerId: owner.id, token: TOKEN, encryptionKey: KEY })).rejects.toThrow(/No Instagram professional account/);
+    await expect(connectAccounts(db, none.config, { ownerId: owner.id, token: TOKEN, encryptionKey: KEY })).rejects.toMatchObject({ code: 'no_account', message: expect.stringMatching(/No Instagram professional account/) });
+  });
+
+  it('explains a configuration that issues the wrong token type, and refuses an invalid token', async () => {
+    const owner = await createUser(db);
+    // A configuration with token type "User access token": the token has no assigned_instagram_accounts edge.
+    const userToken = fakeMeta({
+      'GET debug_token': () => ({ body: { data: { is_valid: true, scopes: ['instagram_basic'], expires_at: 0, type: 'USER' } } }),
+      'GET me': () => ({ body: { id: '10001' } }),
+      'GET me/assigned_instagram_accounts': () => ({ status: 400, body: { error: { message: '(#100) Tried accessing nonexisting field (assigned_instagram_accounts) on node type (User)', code: 100 } } }),
+    });
+    await expect(connectAccounts(db, userToken.config, { ownerId: owner.id, token: TOKEN, encryptionKey: KEY }))
+      .rejects.toMatchObject({ code: 'unsupported_token', message: expect.stringMatching(/System-user access token/) });
+
+    const invalid = fakeMeta({ 'GET debug_token': () => ({ body: { data: { is_valid: false, scopes: [] } } }) });
+    await expect(connectAccounts(db, invalid.config, { ownerId: owner.id, token: TOKEN, encryptionKey: KEY })).rejects.toMatchObject({ code: 'invalid_token' });
+    expect(invalid.count('GET me/assigned_instagram_accounts')).toBe(0);
+    expect(await db.select().from(instagramAccounts).where(eq(instagramAccounts.ownerId, owner.id))).toHaveLength(0);
+  });
+
+  it('accepts the configuration Meta requires (messages and comments granted) and reports what is optional or unused', async () => {
+    const owner = await createUser(db);
+    const scopes = ['instagram_basic', 'instagram_content_publish', 'instagram_manage_comments', 'instagram_manage_messages'];
+    const meta = fakeMeta({
+      'GET debug_token': validToken(scopes),
+      'GET me': () => ({ body: { client_business_id: 'biz-7' } }),
+      'GET me/assigned_instagram_accounts': () => ({ body: { data: [{ id: '178415', username: 'eurodigital.ma' }] } }),
+      'GET 178415': () => ({ body: { id: '178415', username: 'eurodigital.ma' } }),
+    });
+    const [account] = await connectAccounts(db, meta.config, { ownerId: owner.id, token: TOKEN, encryptionKey: KEY });
+    const check = await checkAccount(db, meta.config, account!, KEY);
+    expect(check.ok).toBe(true);
+    expect(check.problems).toEqual([]);
+    expect(check.notes.join(' ')).toMatch(/instagram_manage_insights/);
+    expect(check.notes.join(' ')).toMatch(/not used by this app: instagram_manage_comments, instagram_manage_messages/);
+  });
+
+  it('shows an account whose token has expired as needing a reconnection before the next check', () => {
+    const now = new Date('2026-10-29T12:00:00Z');
+    expect(effectiveStatus({ status: 'connected', tokenExpiresAt: new Date('2026-10-29T11:59:00Z') }, now)).toBe('needs_reauth');
+    expect(effectiveStatus({ status: 'connected', tokenExpiresAt: new Date('2026-12-01T00:00:00Z') }, now)).toBe('connected');
+    expect(effectiveStatus({ status: 'connected', tokenExpiresAt: null }, now)).toBe('connected');
+    expect(effectiveStatus({ status: 'disconnected', tokenExpiresAt: new Date('2020-01-01') }, now)).toBe('disconnected');
   });
 
   it('detects revoked access and missing permissions, and disconnects by deleting the token', async () => {

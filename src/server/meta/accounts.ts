@@ -7,12 +7,30 @@ import { instagramAccounts } from '@/server/db/schema';
 
 import { graphRequest, MetaApiError, type MetaConfig } from './graph';
 
-/** Permissions this app needs (Unified Login, instagram_* family). */
+/** Permissions this app uses (Unified Login, instagram_* family). Insights is optional: only Analytics needs it. */
 export const REQUIRED_SCOPES = {
   basic: 'instagram_basic',
   publish: 'instagram_content_publish',
   insights: 'instagram_manage_insights',
 } as const;
+
+/** Granted permissions this app never uses (e.g. instagram_manage_messages, which Meta's default configuration requires). */
+export function unusedScopes(scopes: string[]): string[] {
+  const used: string[] = Object.values(REQUIRED_SCOPES);
+  return scopes.filter((scope) => !used.includes(scope));
+}
+
+/** Why a connection could not be completed; the callback shows a message per code. */
+export class ConnectionProblem extends Error {
+  constructor(message: string, readonly code: 'invalid_token' | 'unsupported_token' | 'no_account') {
+    super(message);
+  }
+}
+
+/** The stored status, except that a token past its expiry date needs a reconnection even before the next check. */
+export function effectiveStatus(account: Pick<typeof instagramAccounts.$inferSelect, 'status' | 'tokenExpiresAt'>, now = new Date()): string {
+  return account.status === 'connected' && account.tokenExpiresAt && account.tokenExpiresAt <= now ? 'needs_reauth' : account.status;
+}
 
 export type TokenInfo = { isValid: boolean; scopes: string[]; expiresAt: Date | null; type: string | null };
 
@@ -36,12 +54,21 @@ type IgAccount = { id: string; username: string; name?: string; profile_picture_
  */
 export async function connectAccounts(db: Db, config: MetaConfig, input: { ownerId: string; token: string; encryptionKey: string | undefined }) {
   const tokenInfo = await inspectToken(config, input.token);
-  if (!tokenInfo.isValid) throw new MetaApiError('Meta reports this token as invalid.', 400, 190, null, false);
+  if (!tokenInfo.isValid) throw new ConnectionProblem('Meta reports the new access token as invalid.', 'invalid_token');
   const business = await graphRequest<{ client_business_id?: string }>(config, 'GET', 'me', { fields: 'client_business_id' }, input.token).catch(() => ({ client_business_id: undefined }));
-  const assigned = await graphRequest<{ data?: IgAccount[] }>(config, 'GET', 'me/assigned_instagram_accounts', { fields: 'id,username' }, input.token);
+  // Only a Business Integration System User token has this edge; a user token
+  // (configuration with token type "User access token") fails here.
+  const assigned = await graphRequest<{ data?: IgAccount[] }>(config, 'GET', 'me/assigned_instagram_accounts', { fields: 'id,username' }, input.token)
+    .catch((error: unknown) => {
+      if (error instanceof MetaApiError && error.isAuth) throw new ConnectionProblem('Meta refused the new access token.', 'invalid_token');
+      if (error instanceof MetaApiError && !error.transient) {
+        throw new ConnectionProblem(`Meta did not list the Instagram accounts shared with the app (${error.message}). The login configuration must use the token type "System-user access token".`, 'unsupported_token');
+      }
+      throw error;
+    });
   const accounts = assigned.data ?? [];
   if (!accounts.length) {
-    throw new MetaApiError('No Instagram professional account was shared with this app. In the login dialog, select the Instagram account (Business or Creator) of your business portfolio.', 400, null, null, false);
+    throw new ConnectionProblem('No Instagram professional account was shared with this app. In the login dialog, select the Instagram account (Business or Creator) of your business portfolio.', 'no_account');
   }
 
   const ciphertext = encryptSecret(input.token, input.encryptionKey);
@@ -67,11 +94,12 @@ export function accountToken(account: typeof instagramAccounts.$inferSelect, enc
   return decryptSecret(account.tokenCiphertext, encryptionKey);
 }
 
-export type Diagnostics = { ok: boolean; problems: string[]; scopes: string[]; expiresAt: Date | null };
+export type Diagnostics = { ok: boolean; problems: string[]; notes: string[]; scopes: string[]; expiresAt: Date | null };
 
 /** Re-checks a connected account: token valid, scopes granted, account reachable. Updates its status. */
 export async function checkAccount(db: Db, config: MetaConfig, account: typeof instagramAccounts.$inferSelect, encryptionKey: string | undefined): Promise<Diagnostics> {
   const problems: string[] = [];
+  const notes: string[] = [];
   let scopes: string[] = account.grantedScopes;
   let expiresAt: Date | null = account.tokenExpiresAt;
   let status: 'connected' | 'needs_reauth' | 'error' = 'connected';
@@ -86,7 +114,9 @@ export async function checkAccount(db: Db, config: MetaConfig, account: typeof i
     } else {
       if (!scopes.includes(REQUIRED_SCOPES.basic)) problems.push('Permission instagram_basic is not granted.');
       if (!scopes.includes(REQUIRED_SCOPES.publish)) problems.push('Permission instagram_content_publish is not granted: publishing is unavailable.');
-      if (!scopes.includes(REQUIRED_SCOPES.insights)) problems.push('Permission instagram_manage_insights is not granted: analytics are unavailable.');
+      if (!scopes.includes(REQUIRED_SCOPES.insights)) notes.push('Optional permission instagram_manage_insights is not granted: Analytics stays empty until it is added to the login configuration and the account is reconnected.');
+      const unused = unusedScopes(scopes);
+      if (unused.length) notes.push(`Granted but not used by this app: ${unused.join(', ')}.`);
       if (expiresAt && expiresAt.getTime() < Date.now() + 7 * 86_400_000) problems.push(`Access expires on ${expiresAt.toISOString().slice(0, 10)}: reconnect before then.`);
       await graphRequest(config, 'GET', account.igUserId, { fields: 'id,username' }, token);
     }
@@ -101,7 +131,7 @@ export async function checkAccount(db: Db, config: MetaConfig, account: typeof i
   }
   await db.update(instagramAccounts).set({ status, grantedScopes: scopes, tokenExpiresAt: expiresAt, lastCheckedAt: new Date(), lastError: problems[0] ?? null, updatedAt: new Date() })
     .where(eq(instagramAccounts.id, account.id));
-  return { ok: status === 'connected' && problems.length === 0, problems, scopes, expiresAt };
+  return { ok: status === 'connected' && problems.length === 0, problems, notes, scopes, expiresAt };
 }
 
 /**

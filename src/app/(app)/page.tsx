@@ -8,7 +8,7 @@ import { getBrand } from '@/server/brand';
 import { draftCounts, failedJobCount, listDrafts } from '@/server/content/service';
 import { getDb } from '@/server/db';
 import { configStatus } from '@/server/env';
-import { listAccounts } from '@/server/meta/accounts';
+import { effectiveStatus, listAccounts } from '@/server/meta/accounts';
 
 export const metadata = { title: 'Dashboard' };
 
@@ -32,7 +32,7 @@ export default async function DashboardPage() {
         {config.publishingMode !== 'live' || !brand.publishingEnabled ? (
           <Notice tone="info">Publishing is <strong>off</strong> ({config.publishingMode !== 'live' ? 'server: PUBLISHING_MODE is not "live"' : 'switched off in Settings'}). Drafts, approvals and scheduling work; nothing is sent to Instagram.</Notice>
         ) : null}
-        {accounts.some((a) => a.status === 'needs_reauth') ? <Notice tone="error">An Instagram account needs to be reconnected. <Link className="underline" href="/accounts">Open accounts</Link></Notice> : null}
+        {accounts.some((a) => effectiveStatus(a) === 'needs_reauth') ? <Notice tone="error">An Instagram account needs to be reconnected. <Link className="underline" href="/accounts">Open accounts</Link></Notice> : null}
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">

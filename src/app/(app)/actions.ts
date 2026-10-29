@@ -264,7 +264,9 @@ export async function checkAccountAction(_: ActionState, fd: FormData): Promise<
     if (!account || account.ownerId !== user.id) throw new NotFoundError('Account not found');
     const result = await checkAccount(db, metaConfig(), account, env().TOKEN_ENCRYPTION_KEY);
     revalidatePath('/accounts');
-    return result.ok ? { ok: true, message: 'Connection verified: access valid and permissions granted.' } : { error: result.problems.join(' ') };
+    return result.ok
+      ? { ok: true, message: ['Connection verified: access valid, publishing permission granted.', ...result.notes].join(' ') }
+      : { error: [...result.problems, ...result.notes].join(' ') };
   });
 }
 

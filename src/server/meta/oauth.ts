@@ -15,10 +15,36 @@ import { graphRequest, missingConfig, type MetaConfig } from './graph';
  */
 const STATE_TTL_MS = 10 * 60_000;
 
+/** The route Meta redirects to (src/app/api/meta/oauth/callback). */
+export const CALLBACK_PATH = '/api/meta/oauth/callback';
+
 export class OAuthError extends Error {
-  constructor(message: string, readonly code: 'not_configured' | 'invalid_state' | 'denied' | 'exchange_failed') {
+  constructor(message: string, readonly code: 'not_configured' | 'invalid_state' | 'denied' | 'exchange_failed' | 'encryption_key' | 'redirect_uri') {
     super(message);
   }
+}
+
+/** The redirect URI this deployment must register in Meta: APP_URL + the callback route. */
+export function expectedRedirectUri(appUrl: string): string {
+  return new URL(CALLBACK_PATH, appUrl).toString();
+}
+
+/**
+ * Errors make the login fail for certain: Meta would redirect to another route,
+ * or to another host where the session cookie is not sent. Warnings are Meta's
+ * rules the app cannot check (the Unified login Redirect URL must be HTTPS).
+ */
+export function redirectUriProblems(appUrl: string, redirectUri: string | undefined): { errors: string[]; warnings: string[] } {
+  if (!redirectUri) return { errors: [], warnings: [] };
+  const expected = new URL(expectedRedirectUri(appUrl));
+  const actual = new URL(redirectUri);
+  const errors: string[] = [];
+  if (actual.pathname !== CALLBACK_PATH) errors.push(`META_REDIRECT_URI must end with ${CALLBACK_PATH}.`);
+  if (actual.host !== expected.host || actual.protocol !== expected.protocol) {
+    errors.push(`META_REDIRECT_URI must use the same address as APP_URL (${expected.origin}), otherwise the sign-in cookie is lost on the way back.`);
+  }
+  const warnings = actual.protocol === 'https:' ? [] : ['Meta requires an HTTPS Redirect URL in the Unified login configuration: use https:// (locally: npm run dev:https).'];
+  return { errors, warnings };
 }
 
 /** A single-use state bound to the signed-in user (stored as a hash, valid 10 minutes). */

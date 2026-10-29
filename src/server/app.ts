@@ -3,8 +3,7 @@ import 'server-only';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import Anthropic from '@anthropic-ai/sdk';
-
+import { claudeClient } from '@/server/ai/client';
 import type { GenerateDeps } from '@/server/ai/generate';
 import { getDb } from '@/server/db';
 import { env } from '@/server/env';
@@ -38,7 +37,7 @@ export function generateDeps(): GenerateDeps {
   const e = env();
   return {
     db: getDb(),
-    client: e.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: e.ANTHROPIC_API_KEY, maxRetries: 2, timeout: 5 * 60_000 }) : null,
+    client: claudeClient(e, { maxRetries: 2, timeout: 5 * 60_000 }),
     model: e.CLAUDE_MODEL,
     effort: e.CLAUDE_EFFORT,
     dailyLimit: e.AI_DAILY_GENERATION_LIMIT,

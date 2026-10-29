@@ -7,11 +7,13 @@ next-env.d.ts
 
 # Secrets and local configuration (never commit)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 *.pem
 *.key
 secrets/
+# Local HTTPS certificate and key written by `npm run dev:https`
+certificates/
 
 # Local data: uploaded media, database dumps, scratch files
 storage/

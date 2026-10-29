@@ -14,6 +14,16 @@ function keyFrom(base64Key: string | undefined): Buffer {
   return key;
 }
 
+/** True when the key can encrypt tokens (set, base64, 32 bytes). */
+export function isValidEncryptionKey(base64Key: string | undefined): boolean {
+  try {
+    keyFrom(base64Key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function encryptSecret(plaintext: string, base64Key: string | undefined): string {
   const key = keyFrom(base64Key);
   const iv = randomBytes(12);

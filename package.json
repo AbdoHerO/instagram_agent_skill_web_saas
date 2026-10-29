@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "next dev -p 3100",
+    "dev:https": "next dev -p 3100 --experimental-https",
     "build": "next build",
     "start": "next start -p 3100",
     "worker": "tsx --conditions=react-server worker/index.ts",
@@ -21,6 +22,7 @@
     "user:create": "tsx scripts/create-user.ts",
     "skills:install": "node scripts/install-skills.mjs",
     "skills:check": "node scripts/install-skills.mjs --check",
+    "ai:ping": "tsx --conditions=react-server scripts/claude-ping.ts",
     "db:local": "pglite-server --db=.data/pglite --port=5433 --max-connections=10"
   },
   "dependencies": {

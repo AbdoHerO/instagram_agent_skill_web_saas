@@ -47,8 +47,10 @@ No PostgreSQL at hand? `npm run db:local` starts an embedded PostgreSQL (PGlite)
 Copy `.env.example` to `.env.local` (the setup script already created it) and fill in what you have. Never commit
 `.env.local`; never paste keys into chats or documents.
 
-- **Claude**: `ANTHROPIC_API_KEY` (Anthropic Console). `CLAUDE_MODEL` defaults to `claude-opus-5-5`, `CLAUDE_EFFORT` to `medium`,
-  `AI_DAILY_GENERATION_LIMIT` to 50 per user per day.
+- **Claude**: `ANTHROPIC_API_KEY` (Claude Console). A key that is not scoped to a workspace also needs
+  `ANTHROPIC_WORKSPACE_ID` (`wrkspc_…`, Console > Settings > Workspaces). `CLAUDE_MODEL` defaults to `claude-opus-5-5`,
+  `CLAUDE_EFFORT` to `medium`, `AI_DAILY_GENERATION_LIMIT` to 50 per user per day. Test the key with one short request:
+  `npm run ai:ping`.
 - **Product data**: `ECOMMERCE_API_URL=http://192.168.1.7:8010/api/v1` (the local e-commerce API, read-only).
 - **Meta**: `META_APP_ID`, `META_APP_SECRET`, `META_LOGIN_CONFIG_ID`, `META_REDIRECT_URI` — see [docs/meta-setup.md](docs/meta-setup.md).
 - **Media**: Meta downloads media from a **public** URL. Locally that needs a public HTTPS address (`MEDIA_PUBLIC_BASE_URL`),
